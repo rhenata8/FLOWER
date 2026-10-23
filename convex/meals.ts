@@ -84,6 +84,37 @@ export const archiveRecipe = mutation({
   },
 });
 
+export const removeRecipe = mutation({
+  args: { id: v.id("recipes") },
+  handler: async (ctx, args) => {
+    const recipe = await ctx.db.get(args.id);
+    if (!recipe || recipe.ownerId !== OWNER_ID) {
+      throw new Error("Resep tidak ditemukan");
+    }
+
+    // Delete associated recipeIngredients
+    const ingredients = await ctx.db
+      .query("recipeIngredients")
+      .withIndex("by_recipe", (q) => q.eq("recipeId", args.id))
+      .collect();
+    for (const ri of ingredients) {
+      await ctx.db.delete(ri._id);
+    }
+
+    // Delete associated meal plans
+    const mealPlans = await ctx.db
+      .query("mealPlans")
+      .withIndex("by_owner", (q) => q.eq("ownerId", OWNER_ID))
+      .filter((q) => q.eq(q.field("recipeId"), args.id))
+      .collect();
+    for (const mp of mealPlans) {
+      await ctx.db.delete(mp._id);
+    }
+
+    await ctx.db.delete(args.id);
+  },
+});
+
 // ─── Ingredient Mutations ──────────────────────────────────────────────
 
 export const createIngredient = mutation({
@@ -134,6 +165,27 @@ export const updateIngredient = mutation({
     }
 
     await ctx.db.patch(args.id, updates);
+  },
+});
+
+export const removeIngredient = mutation({
+  args: { id: v.id("ingredients") },
+  handler: async (ctx, args) => {
+    const ing = await ctx.db.get(args.id);
+    if (!ing || ing.ownerId !== OWNER_ID) {
+      throw new Error("Bahan tidak ditemukan");
+    }
+
+    // Delete recipe ingredients references
+    const ris = await ctx.db
+      .query("recipeIngredients")
+      .withIndex("by_ingredient", (q) => q.eq("ingredientId", args.id))
+      .collect();
+    for (const ri of ris) {
+      await ctx.db.delete(ri._id);
+    }
+
+    await ctx.db.delete(args.id);
   },
 });
 

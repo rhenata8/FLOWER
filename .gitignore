@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# reference & design assets
+/Redesain dashboard dengan gaya unik tanpa ikon berwarna (1)/

@@ -5,27 +5,73 @@ import { api } from "../../convex/_generated/api";
 import { formatIdr, todayKeyLocal, getCurrentWeekRange, getWeekDates } from "../lib/utils";
 import { useState } from "react";
 import type { Id } from "../../convex/_generated/dataModel";
+import { ConfirmModal } from "../components/ConfirmModal";
 
 type ActiveTab = "recipes" | "ingredients" | "mealplan" | "shopping";
 
 export default function MenuPage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("recipes");
 
+  // Shared Confirm Modal
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    actionText: string;
+    isDanger?: boolean;
+    onConfirm: () => Promise<void>;
+  }>({
+    isOpen: false,
+    title: "",
+    message: "",
+    actionText: "Hapus",
+    isDanger: true,
+    onConfirm: async () => {},
+  });
+  const [isActionLoading, setIsActionLoading] = useState(false);
+
+  const openConfirm = (opts: {
+    title: string;
+    message: string;
+    actionText?: string;
+    isDanger?: boolean;
+    onConfirm: () => Promise<void>;
+  }) => {
+    setConfirmModal({
+      isOpen: true,
+      title: opts.title,
+      message: opts.message,
+      actionText: opts.actionText ?? "Hapus",
+      isDanger: opts.isDanger !== undefined ? opts.isDanger : true,
+      onConfirm: async () => {
+        setIsActionLoading(true);
+        try {
+          await opts.onConfirm();
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+        } catch (err: unknown) {
+          console.error("Action error", err);
+        } finally {
+          setIsActionLoading(false);
+        }
+      },
+    });
+  };
+
   return (
-    <div>
+    <div className="feature-page">
       <div className="section-header">
         <div>
           <h1 className="section-title">Menu & Belanja</h1>
-          <p className="section-subtitle">Resep, bahan, rencana menu, dan daftar belanja</p>
+          <p className="section-subtitle">Resep, bahan, rencana menu mingguan, dan daftar belanja</p>
         </div>
       </div>
 
-      <div className="tabs">
+      <div className="menu-tabs">
         {([
-          { key: "recipes", label: "🍳 Resep" },
-          { key: "ingredients", label: "🥕 Bahan" },
-          { key: "mealplan", label: "📅 Rencana Menu" },
-          { key: "shopping", label: "🛒 Belanja" },
+          { key: "recipes", label: "Resep" },
+          { key: "ingredients", label: "Bahan" },
+          { key: "mealplan", label: "Rencana Menu" },
+          { key: "shopping", label: "Daftar Belanja" },
         ] as { key: ActiveTab; label: string }[]).map((tab) => (
           <button
             key={tab.key}
@@ -37,30 +83,57 @@ export default function MenuPage() {
         ))}
       </div>
 
-      {activeTab === "recipes" && <RecipesTab />}
-      {activeTab === "ingredients" && <IngredientsTab />}
-      {activeTab === "mealplan" && <MealPlanTab />}
+      {activeTab === "recipes" && <RecipesTab openConfirm={openConfirm} />}
+      {activeTab === "ingredients" && <IngredientsTab openConfirm={openConfirm} />}
+      {activeTab === "mealplan" && <MealPlanTab openConfirm={openConfirm} />}
       {activeTab === "shopping" && <ShoppingTab />}
+
+      {/* Custom Confirmation Modal */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        actionText={confirmModal.actionText}
+        isDanger={confirmModal.isDanger}
+        isLoading={isActionLoading}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }
 
-// ─── Recipes Tab ───────────────────────────────────────────────────────
+// ─── 1. Recipes Tab ─────────────────────────────────────────────────────
 
-function RecipesTab() {
+function RecipesTab({
+  openConfirm,
+}: {
+  openConfirm: (opts: {
+    title: string;
+    message: string;
+    actionText?: string;
+    isDanger?: boolean;
+    onConfirm: () => Promise<void>;
+  }) => void;
+}) {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [servings, setServings] = useState("1");
   const [instructions, setInstructions] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [expandedRecipeId, setExpandedRecipeId] = useState<Id<"recipes"> | null>(null);
 
   const recipes = useQuery(api.meals.listRecipes, {});
   const createRecipe = useMutation(api.meals.createRecipe);
-  const archiveRecipe = useMutation(api.meals.archiveRecipe);
+  const removeRecipe = useMutation(api.meals.removeRecipe);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
     try {
       await createRecipe({
         name,
@@ -72,8 +145,25 @@ function RecipesTab() {
       setServings("1");
       setInstructions("");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error");
+      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
+    } finally {
+      setIsSubmitting(false);
     }
+  };
+
+  const promptDeleteRecipe = (recipe: { _id: Id<"recipes">; name: string }) => {
+    openConfirm({
+      title: "Hapus Resep",
+      message: `Apakah Anda yakin ingin menghapus resep "${recipe.name}"? Bahan dan jadwal menu terkait resep ini juga akan dibersihkan.`,
+      actionText: "Hapus Resep",
+      isDanger: true,
+      onConfirm: async () => {
+        await removeRecipe({ id: recipe._id });
+        if (expandedRecipeId === recipe._id) {
+          setExpandedRecipeId(null);
+        }
+      },
+    });
   };
 
   return (
@@ -86,111 +176,277 @@ function RecipesTab() {
 
       {showForm && (
         <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
+          <h2 className="card-title" style={{ marginBottom: "var(--space-md)" }}>Tambah Resep Baru</h2>
           <form onSubmit={handleSubmit}>
             <div className="form-group">
               <label className="form-label">Nama Resep</label>
-              <input className="form-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Nasi Goreng" required />
+              <input
+                className="form-input"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Contoh: Nasi Goreng Spesial"
+                required
+              />
             </div>
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">Porsi</label>
-                <input className="form-input" type="number" min="1" value={servings} onChange={(e) => setServings(e.target.value)} required />
+                <input
+                  className="form-input"
+                  type="number"
+                  min="1"
+                  value={servings}
+                  onChange={(e) => setServings(e.target.value)}
+                  required
+                />
               </div>
             </div>
             <div className="form-group">
-              <label className="form-label">Instruksi (opsional)</label>
-              <textarea className="form-textarea" value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="Langkah-langkah memasak..." />
+              <label className="form-label">Instruksi Memasak (opsional)</label>
+              <textarea
+                className="form-textarea"
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                placeholder="Langkah-langkah memasak..."
+              />
             </div>
             {error && <div className="form-error">{error}</div>}
             <div className="modal-actions">
-              <button type="submit" className="btn btn-primary">Simpan Resep</button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowForm(false)}
+              >
+                Batal
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+                {isSubmitting ? "Menyimpan..." : "Simpan Resep"}
+              </button>
             </div>
           </form>
         </div>
       )}
 
+      {/* Recipes Table */}
       <div className="card">
-        {recipes && recipes.length > 0 ? (
-          recipes.map((recipe) => (
-            <RecipeItem key={recipe._id} recipe={recipe} onArchive={() => archiveRecipe({ id: recipe._id })} />
-          ))
-        ) : recipes ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">🍳</div>
-            <div className="empty-state-title">Belum ada resep</div>
-            <div className="empty-state-description">Tambahkan resep pertamamu!</div>
+        <div className="card-header" style={{ marginBottom: 0 }}>
+          <h2 className="card-title">Daftar Resep</h2>
+          <span className="badge badge-accent">
+            {recipes ? `${recipes.length} resep` : "Memuat..."}
+          </span>
+        </div>
+
+        {recipes === undefined ? (
+          <div style={{ padding: "16px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="skeleton skeleton-row" />
+            <div className="skeleton skeleton-row" />
+            <div className="skeleton skeleton-row" />
+          </div>
+        ) : recipes.length > 0 ? (
+          <div className="table-container">
+            <table className="editorial-table">
+              <thead>
+                <tr>
+                  <th>Nama Resep</th>
+                  <th>Porsi</th>
+                  <th>Instruksi / Catatan</th>
+                  <th className="col-actions">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recipes.map((recipe) => {
+                  const isExpanded = expandedRecipeId === recipe._id;
+                  return (
+                    <RecipeRow
+                      key={recipe._id}
+                      recipe={recipe}
+                      isExpanded={isExpanded}
+                      onToggle={() => setExpandedRecipeId(isExpanded ? null : recipe._id)}
+                      onDelete={() => promptDeleteRecipe(recipe)}
+                      openConfirm={openConfirm}
+                    />
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         ) : (
-          <LoadingSkeleton />
+          <div className="empty-state">
+            <div className="empty-state-title">Belum ada resep</div>
+            <div className="empty-state-description">Tambahkan resep pertamamu dengan tombol &quot;+ Resep Baru&quot;.</div>
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-function RecipeItem({ recipe, onArchive }: { recipe: { _id: Id<"recipes">; name: string; servings: number; instructions?: string }; onArchive: () => void }) {
-  const [showDetail, setShowDetail] = useState(false);
+function RecipeRow({
+  recipe,
+  isExpanded,
+  onToggle,
+  onDelete,
+  openConfirm,
+}: {
+  recipe: { _id: Id<"recipes">; name: string; servings: number; instructions?: string };
+  isExpanded: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+  openConfirm: (opts: {
+    title: string;
+    message: string;
+    actionText?: string;
+    isDanger?: boolean;
+    onConfirm: () => Promise<void>;
+  }) => void;
+}) {
   const detail = useQuery(
     api.meals.getRecipeWithIngredients,
-    showDetail ? { recipeId: recipe._id } : "skip"
+    isExpanded ? { recipeId: recipe._id } : "skip"
   );
+  const removeRecipeIngredient = useMutation(api.meals.removeRecipeIngredient);
+
+  const promptRemoveIngredient = (riId: Id<"recipeIngredients">, ingredientName: string) => {
+    openConfirm({
+      title: "Hapus Bahan dari Resep",
+      message: `Hapus bahan "${ingredientName}" dari resep ${recipe.name}?`,
+      actionText: "Hapus Bahan",
+      isDanger: true,
+      onConfirm: async () => {
+        await removeRecipeIngredient({ id: riId });
+      },
+    });
+  };
 
   return (
-    <div>
-      <div className="list-item" onClick={() => setShowDetail(!showDetail)} style={{ cursor: "pointer" }}>
-        <div className="list-item-icon" style={{ background: "var(--accent-50)", color: "var(--accent-600)" }}>
-          🍳
-        </div>
-        <div className="list-item-content">
-          <div className="list-item-title">{recipe.name}</div>
-          <div className="list-item-subtitle">{recipe.servings} porsi</div>
-        </div>
-        <div className="list-item-right" style={{ display: "flex", gap: "var(--space-xs)", alignItems: "center" }}>
-          {detail && <span style={{ fontSize: "var(--font-size-sm)", fontWeight: 600, color: "var(--accent-600)" }}>{formatIdr(detail.estimatedCostIdr)}</span>}
-          <button className="btn btn-ghost btn-sm" onClick={(e) => { e.stopPropagation(); onArchive(); }} title="Arsipkan">🗑️</button>
-          <span style={{ fontSize: "12px", color: "var(--text-tertiary)" }}>{showDetail ? "▲" : "▼"}</span>
-        </div>
-      </div>
-      {showDetail && detail && (
-        <div style={{ padding: "0 var(--space-lg) var(--space-md)", fontSize: "var(--font-size-sm)" }}>
-          {detail.instructions && <p style={{ color: "var(--text-secondary)", marginBottom: "var(--space-sm)" }}>{detail.instructions}</p>}
-          {detail.ingredients.length > 0 ? (
-            <div>
-              <div style={{ fontWeight: 600, marginBottom: "var(--space-xs)" }}>Bahan:</div>
-              {detail.ingredients.map((ri) => (
-                <div key={ri._id} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", color: "var(--text-secondary)" }}>
-                  <span>{ri.ingredient?.name ?? "?"} — {ri.quantity} {ri.unit}</span>
-                  <span>{ri.ingredient ? formatIdr(Math.round(ri.quantity * ri.ingredient.currentPriceIdr)) : "-"}</span>
-                </div>
-              ))}
-              <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, marginTop: "var(--space-sm)", borderTop: "1px solid var(--border-light)", paddingTop: "var(--space-xs)" }}>
-                <span>Total ({detail.servings} porsi)</span>
-                <span>{formatIdr(detail.estimatedCostIdr)}</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", color: "var(--text-tertiary)" }}>
-                <span>Per porsi</span>
-                <span>{formatIdr(detail.costPerServing)}</span>
-              </div>
+    <>
+      <tr>
+        <td>
+          <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+            {recipe.name}
+          </div>
+          {detail && (
+            <div style={{ fontSize: "var(--font-size-xs)", color: "var(--accent-600)", fontWeight: 600, marginTop: 2 }}>
+              Estimasi: {formatIdr(detail.estimatedCostIdr)} ({formatIdr(detail.costPerServing)}/porsi)
+            </div>
+          )}
+        </td>
+        <td>
+          <span className="badge badge-accent">
+            {recipe.servings} porsi
+          </span>
+        </td>
+        <td style={{ color: "var(--text-secondary)", maxWidth: 320 }}>
+          {recipe.instructions ? (
+            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {recipe.instructions}
             </div>
           ) : (
-            <p style={{ color: "var(--text-tertiary)", fontStyle: "italic" }}>Belum ada bahan. Tambahkan bahan di tab Bahan.</p>
+            <span style={{ color: "var(--text-tertiary)" }}>—</span>
           )}
-        </div>
+        </td>
+        <td className="col-actions">
+          <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={onToggle}
+            >
+              {isExpanded ? "Tutup Bahan" : "Lihat Bahan"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              style={{ color: "var(--error)" }}
+              onClick={onDelete}
+              title="Hapus resep"
+            >
+              Hapus
+            </button>
+          </div>
+        </td>
+      </tr>
+      {isExpanded && (
+        <tr>
+          <td colSpan={4} style={{ background: "var(--accent-50)", padding: "var(--space-md) var(--space-lg)" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-sm)" }}>
+              {recipe.instructions && (
+                <div style={{ fontSize: "var(--font-size-sm)", color: "var(--text-secondary)", marginBottom: "var(--space-xs)" }}>
+                  <strong>Instruksi:</strong> {recipe.instructions}
+                </div>
+              )}
+              <div style={{ fontWeight: 600, fontSize: "var(--font-size-sm)", color: "var(--text-primary)" }}>
+                Daftar Bahan:
+              </div>
+              {detail === undefined ? (
+                <div className="skeleton skeleton-row" style={{ height: 28 }} />
+              ) : detail && detail.ingredients.length > 0 ? (
+                <div style={{ background: "#ffffff", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-light)", overflow: "hidden" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--font-size-xs)" }}>
+                    <thead>
+                      <tr style={{ borderBottom: "1px solid var(--border-light)", color: "var(--text-tertiary)", textAlign: "left" }}>
+                        <th style={{ padding: "6px 12px" }}>Bahan</th>
+                        <th style={{ padding: "6px 12px" }}>Takaran</th>
+                        <th style={{ padding: "6px 12px" }}>Perkiraan Biaya</th>
+                        <th style={{ padding: "6px 12px", textAlign: "right" }}>Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {detail.ingredients.map((ri) => (
+                        <tr key={ri._id} style={{ borderBottom: "1px solid var(--border-light)" }}>
+                          <td style={{ padding: "6px 12px", fontWeight: 500 }}>{ri.ingredient?.name ?? "?"}</td>
+                          <td style={{ padding: "6px 12px" }}>{ri.quantity} {ri.unit}</td>
+                          <td style={{ padding: "6px 12px", color: "var(--accent-600)" }}>
+                            {ri.ingredient ? formatIdr(Math.round(ri.quantity * ri.ingredient.currentPriceIdr)) : "-"}
+                          </td>
+                          <td style={{ padding: "6px 12px", textAlign: "right" }}>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              style={{ color: "var(--error)", padding: "2px 6px", fontSize: 11 }}
+                              onClick={() => promptRemoveIngredient(ri._id, ri.ingredient?.name ?? "bahan")}
+                            >
+                              Hapus
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-tertiary)", fontStyle: "italic" }}>
+                  Belum ada bahan yang dihubungkan ke resep ini. Hubungkan melalui tab &quot;Bahan&quot;.
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
       )}
-    </div>
+    </>
   );
 }
 
-// ─── Ingredients Tab ───────────────────────────────────────────────────
+// ─── 2. Ingredients Tab ─────────────────────────────────────────────────
 
-function IngredientsTab() {
+function IngredientsTab({
+  openConfirm,
+}: {
+  openConfirm: (opts: {
+    title: string;
+    message: string;
+    actionText?: string;
+    isDanger?: boolean;
+    onConfirm: () => Promise<void>;
+  }) => void;
+}) {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState("");
   const [unit, setUnit] = useState("gram");
   const [price, setPrice] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Recipe ingredient linking
   const [linkRecipeId, setLinkRecipeId] = useState<Id<"recipes"> | "">("");
   const [linkIngredientId, setLinkIngredientId] = useState<Id<"ingredients"> | "">("");
   const [linkQuantity, setLinkQuantity] = useState("");
@@ -200,6 +456,7 @@ function IngredientsTab() {
   const ingredients = useQuery(api.meals.listIngredients);
   const recipes = useQuery(api.meals.listRecipes, {});
   const createIngredient = useMutation(api.meals.createIngredient);
+  const removeIngredient = useMutation(api.meals.removeIngredient);
   const addRecipeIngredient = useMutation(api.meals.addRecipeIngredient);
 
   const UNITS = ["gram", "kg", "ml", "liter", "buah", "bungkus", "lembar", "butir", "sdm", "sdt", "siung"];
@@ -207,6 +464,9 @@ function IngredientsTab() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (isSubmitting) return;
+
+    setIsSubmitting(true);
     try {
       await createIngredient({
         name,
@@ -217,7 +477,9 @@ function IngredientsTab() {
       setName("");
       setPrice("");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error");
+      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -225,6 +487,7 @@ function IngredientsTab() {
     e.preventDefault();
     setError(null);
     if (!linkRecipeId || !linkIngredientId) return;
+
     try {
       await addRecipeIngredient({
         recipeId: linkRecipeId as Id<"recipes">,
@@ -235,43 +498,97 @@ function IngredientsTab() {
       setShowLinkForm(false);
       setLinkQuantity("");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error");
+      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
     }
+  };
+
+  const promptDeleteIngredient = (ing: { _id: Id<"ingredients">; name: string }) => {
+    openConfirm({
+      title: "Hapus Bahan",
+      message: `Apakah Anda yakin ingin menghapus bahan "${ing.name}"? Bahan ini juga akan dilepas dari resep terkait.`,
+      actionText: "Hapus Bahan",
+      isDanger: true,
+      onConfirm: async () => {
+        await removeIngredient({ id: ing._id });
+      },
+    });
   };
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-sm)", marginBottom: "var(--space-md)" }}>
-        <button className="btn btn-secondary" onClick={() => { setShowLinkForm(!showLinkForm); setShowForm(false); }}>
-          🔗 Hubungkan ke Resep
+        <button
+          className="btn btn-secondary"
+          onClick={() => {
+            setShowLinkForm(!showLinkForm);
+            setShowForm(false);
+          }}
+        >
+          {showLinkForm ? "Batal Hubung" : "Hubungkan ke Resep"}
         </button>
-        <button className="btn btn-primary" onClick={() => { setShowForm(!showForm); setShowLinkForm(false); }}>
+        <button
+          className="btn btn-primary"
+          onClick={() => {
+            setShowForm(!showForm);
+            setShowLinkForm(false);
+          }}
+        >
           {showForm ? "Batal" : "+ Bahan Baru"}
         </button>
       </div>
 
       {showForm && (
         <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
+          <h2 className="card-title" style={{ marginBottom: "var(--space-md)" }}>Tambah Bahan Baru</h2>
           <form onSubmit={handleSubmit}>
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">Nama Bahan</label>
-                <input className="form-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Beras" required />
+                <input
+                  className="form-input"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Contoh: Beras Ramos"
+                  required
+                />
               </div>
               <div className="form-group">
                 <label className="form-label">Satuan</label>
-                <select className="form-select" value={unit} onChange={(e) => setUnit(e.target.value)}>
-                  {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                <select
+                  className="form-select"
+                  value={unit}
+                  onChange={(e) => setUnit(e.target.value)}
+                >
+                  {UNITS.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
                 </select>
               </div>
             </div>
             <div className="form-group">
               <label className="form-label">Harga per satuan (Rp)</label>
-              <input className="form-input" type="number" min="0" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="15000" required />
+              <input
+                className="form-input"
+                type="number"
+                min="0"
+                value={price}
+                onChange={(e) => setPrice(e.target.value)}
+                placeholder="15000"
+                required
+              />
             </div>
             {error && <div className="form-error">{error}</div>}
             <div className="modal-actions">
-              <button type="submit" className="btn btn-primary">Simpan</button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowForm(false)}
+              >
+                Batal
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+                {isSubmitting ? "Menyimpan..." : "Simpan Bahan"}
+              </button>
             </div>
           </form>
         </div>
@@ -279,79 +596,169 @@ function IngredientsTab() {
 
       {showLinkForm && (
         <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
-          <h3 className="card-title" style={{ marginBottom: "var(--space-md)" }}>Hubungkan Bahan ke Resep</h3>
+          <h2 className="card-title" style={{ marginBottom: "var(--space-md)" }}>Hubungkan Bahan ke Resep</h2>
           <form onSubmit={handleLink}>
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Resep</label>
-                <select className="form-select" value={linkRecipeId} onChange={(e) => setLinkRecipeId(e.target.value as Id<"recipes">)} required>
-                  <option value="">Pilih resep...</option>
-                  {recipes?.map((r) => <option key={r._id} value={r._id}>{r.name}</option>)}
+                <label className="form-label">Pilih Resep</label>
+                <select
+                  className="form-select"
+                  value={linkRecipeId}
+                  onChange={(e) => setLinkRecipeId(e.target.value as Id<"recipes">)}
+                  required
+                >
+                  <option value="">Pilih resep tujuan...</option>
+                  {recipes?.map((r) => (
+                    <option key={r._id} value={r._id}>{r.name}</option>
+                  ))}
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">Bahan</label>
-                <select className="form-select" value={linkIngredientId} onChange={(e) => setLinkIngredientId(e.target.value as Id<"ingredients">)} required>
+                <label className="form-label">Pilih Bahan</label>
+                <select
+                  className="form-select"
+                  value={linkIngredientId}
+                  onChange={(e) => {
+                    const ingId = e.target.value as Id<"ingredients">;
+                    setLinkIngredientId(ingId);
+                    const found = ingredients?.find((i) => i._id === ingId);
+                    if (found) setLinkUnit(found.unit);
+                  }}
+                  required
+                >
                   <option value="">Pilih bahan...</option>
-                  {ingredients?.map((i) => <option key={i._id} value={i._id}>{i.name} ({i.unit})</option>)}
+                  {ingredients?.map((i) => (
+                    <option key={i._id} value={i._id}>{i.name} ({i.unit})</option>
+                  ))}
                 </select>
               </div>
             </div>
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Jumlah</label>
-                <input className="form-input" type="number" step="0.01" min="0.01" value={linkQuantity} onChange={(e) => setLinkQuantity(e.target.value)} required />
+                <label className="form-label">Takaran / Jumlah</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={linkQuantity}
+                  onChange={(e) => setLinkQuantity(e.target.value)}
+                  placeholder="Contoh: 250"
+                  required
+                />
               </div>
               <div className="form-group">
                 <label className="form-label">Satuan</label>
-                <select className="form-select" value={linkUnit} onChange={(e) => setLinkUnit(e.target.value)}>
-                  {UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
+                <select
+                  className="form-select"
+                  value={linkUnit}
+                  onChange={(e) => setLinkUnit(e.target.value)}
+                >
+                  {UNITS.map((u) => (
+                    <option key={u} value={u}>{u}</option>
+                  ))}
                 </select>
               </div>
             </div>
             {error && <div className="form-error">{error}</div>}
             <div className="modal-actions">
-              <button type="submit" className="btn btn-primary">Hubungkan</button>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowLinkForm(false)}
+              >
+                Batal
+              </button>
+              <button type="submit" className="btn btn-primary">
+                Hubungkan Bahan
+              </button>
             </div>
           </form>
         </div>
       )}
 
+      {/* Ingredients Table */}
       <div className="card">
-        {ingredients && ingredients.length > 0 ? (
-          ingredients.map((ing) => (
-            <div key={ing._id} className="list-item">
-              <div className="list-item-icon" style={{ background: "var(--success-bg)", color: "var(--success)" }}>
-                🥕
-              </div>
-              <div className="list-item-content">
-                <div className="list-item-title">{ing.name}</div>
-                <div className="list-item-subtitle">{ing.unit}</div>
-              </div>
-              <div className="list-item-right">
-                <div style={{ fontSize: "var(--font-size-sm)", fontWeight: 600 }}>
-                  {formatIdr(ing.currentPriceIdr)}/{ing.unit}
-                </div>
-              </div>
-            </div>
-          ))
-        ) : ingredients ? (
+        <div className="card-header" style={{ marginBottom: 0 }}>
+          <h2 className="card-title">Daftar Bahan Makanan</h2>
+          <span className="badge badge-accent">
+            {ingredients ? `${ingredients.length} bahan` : "Memuat..."}
+          </span>
+        </div>
+
+        {ingredients === undefined ? (
+          <div style={{ padding: "16px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="skeleton skeleton-row" />
+            <div className="skeleton skeleton-row" />
+            <div className="skeleton skeleton-row" />
+          </div>
+        ) : ingredients.length > 0 ? (
+          <div className="table-container">
+            <table className="editorial-table">
+              <thead>
+                <tr>
+                  <th>Nama Bahan</th>
+                  <th>Satuan Dasar</th>
+                  <th>Harga Terkini</th>
+                  <th className="col-actions">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ingredients.map((ing) => (
+                  <tr key={ing._id}>
+                    <td>
+                      <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+                        {ing.name}
+                      </div>
+                    </td>
+                    <td>
+                      <span className="badge badge-accent">
+                        {ing.unit}
+                      </span>
+                    </td>
+                    <td style={{ fontWeight: 600, color: "var(--accent-600)" }}>
+                      {formatIdr(ing.currentPriceIdr)} / {ing.unit}
+                    </td>
+                    <td className="col-actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{ color: "var(--error)" }}
+                        onClick={() => promptDeleteIngredient(ing)}
+                        title="Hapus bahan"
+                      >
+                        Hapus
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
           <div className="empty-state">
-            <div className="empty-state-icon">🥕</div>
             <div className="empty-state-title">Belum ada bahan</div>
             <div className="empty-state-description">Tambahkan bahan untuk memulai perencanaan menu.</div>
           </div>
-        ) : (
-          <LoadingSkeleton />
         )}
       </div>
     </div>
   );
 }
 
-// ─── Meal Plan Tab ─────────────────────────────────────────────────────
+// ─── 3. Meal Plan Tab ───────────────────────────────────────────────────
 
-function MealPlanTab() {
+function MealPlanTab({
+  openConfirm,
+}: {
+  openConfirm: (opts: {
+    title: string;
+    message: string;
+    actionText?: string;
+    isDanger?: boolean;
+    onConfirm: () => Promise<void>;
+  }) => void;
+}) {
   const weekRange = getCurrentWeekRange();
   const weekDates = getWeekDates(weekRange.start);
   const todayKey = todayKeyLocal();
@@ -361,6 +768,7 @@ function MealPlanTab() {
   const [selectedRecipeId, setSelectedRecipeId] = useState<Id<"recipes"> | "">("");
   const [selectedServings, setSelectedServings] = useState("1");
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const recipes = useQuery(api.meals.listRecipes, {});
   const mealPlans = useQuery(api.meals.getMealPlanRange, {
@@ -375,7 +783,9 @@ function MealPlanTab() {
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!selectedRecipeId) return;
+    if (!selectedRecipeId || isSubmitting) return;
+
+    setIsSubmitting(true);
     try {
       await addMealPlan({
         dateKeyLocal: selectedDate,
@@ -385,133 +795,204 @@ function MealPlanTab() {
       setShowAddForm(false);
       setSelectedRecipeId("");
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error");
+      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
+    } finally {
+      setIsSubmitting(false);
     }
   };
+
+  const promptRemoveMeal = (mp: { _id: Id<"mealPlans">; recipeName: string }) => {
+    openConfirm({
+      title: "Hapus Rencana Menu",
+      message: `Hapus resep "${mp.recipeName}" dari rencana menu tanggal ini?`,
+      actionText: "Hapus Menu",
+      isDanger: true,
+      onConfirm: async () => {
+        await removeMealPlan({ id: mp._id });
+      },
+    });
+  };
+
+  const dayPlans = mealPlans?.filter((mp) => mp.dateKeyLocal === selectedDate) ?? [];
+  const totalCost = dayPlans.reduce((sum, mp) => sum + mp.estimatedCostIdr, 0);
 
   return (
     <div>
       {/* Week Calendar */}
-      <div style={{ display: "flex", gap: "var(--space-sm)", marginBottom: "var(--space-lg)", overflowX: "auto" }}>
+      <div className="menu-calendar">
         {weekDates.map((date, i) => {
           const isToday = date === todayKey;
           const isSelected = date === selectedDate;
-          const dayPlans = mealPlans?.filter((mp) => mp.dateKeyLocal === date) ?? [];
+          const count = mealPlans?.filter((mp) => mp.dateKeyLocal === date).length ?? 0;
 
           return (
             <button
               key={date}
+              type="button"
+              aria-pressed={isSelected}
               onClick={() => setSelectedDate(date)}
-              style={{
-                flex: "1 0 auto",
-                minWidth: 56,
-                padding: "var(--space-sm)",
-                borderRadius: "var(--radius-md)",
-                border: isSelected ? "2px solid var(--accent-500)" : "1px solid var(--border-light)",
-                background: isSelected ? "var(--accent-50)" : isToday ? "var(--bg-secondary)" : "var(--bg-card)",
-                cursor: "pointer",
-                textAlign: "center",
-                fontFamily: "var(--font-family)",
-                transition: "all var(--transition-fast)",
-              }}
+              className={isSelected ? "active-calendar-day" : ""}
             >
               <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-tertiary)", fontWeight: 500 }}>
-                {dayNames[i]}
+                {dayNames[i]} {isToday && "•"}
               </div>
-              <div style={{ fontSize: "var(--font-size-lg)", fontWeight: 600, color: isSelected ? "var(--accent-600)" : "var(--text-primary)" }}>
+              <div style={{ fontSize: "16px", fontWeight: 700, color: isSelected ? "var(--accent-600)" : "var(--text-primary)" }}>
                 {date.split("-")[2]}
               </div>
-              {dayPlans.length > 0 && (
-                <div style={{ fontSize: 8, color: "var(--accent-500)", marginTop: 2 }}>
-                  {"●".repeat(Math.min(dayPlans.length, 3))}
-                </div>
+              {count > 0 && (
+                <span className="calendar-count">
+                  {count} menu
+                </span>
               )}
             </button>
           );
         })}
       </div>
 
-      {/* Selected Day */}
+      {/* Selected Day Table */}
       <div className="card">
-        <div className="card-header">
-          <h2 className="card-title">
-            Menu {selectedDate === todayKey ? "Hari Ini" : selectedDate}
-          </h2>
+        <div className="card-header" style={{ marginBottom: 0 }}>
+          <div>
+            <h2 className="card-title">
+              Menu {selectedDate === todayKey ? "Hari Ini" : selectedDate}
+            </h2>
+            <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)", marginTop: 2 }}>
+              {dayPlans.length} resep dijadwalkan
+            </div>
+          </div>
           <button className="btn btn-primary btn-sm" onClick={() => setShowAddForm(!showAddForm)}>
-            + Tambah Menu
+            {showAddForm ? "Batal" : "+ Tambah Menu"}
           </button>
         </div>
 
         {showAddForm && (
-          <form onSubmit={handleAdd} style={{ marginBottom: "var(--space-md)", padding: "var(--space-md)", background: "var(--bg-secondary)", borderRadius: "var(--radius-md)" }}>
+          <form
+            onSubmit={handleAdd}
+            style={{
+              margin: "var(--space-md) 0",
+              padding: "var(--space-md)",
+              background: "var(--bg-secondary)",
+              borderRadius: "var(--radius-md)",
+            }}
+          >
             <div className="form-row">
               <div className="form-group">
-                <label className="form-label">Resep</label>
-                <select className="form-select" value={selectedRecipeId} onChange={(e) => setSelectedRecipeId(e.target.value as Id<"recipes">)} required>
+                <label className="form-label">Pilih Resep</label>
+                <select
+                  className="form-select"
+                  value={selectedRecipeId}
+                  onChange={(e) => setSelectedRecipeId(e.target.value as Id<"recipes">)}
+                  required
+                >
                   <option value="">Pilih resep...</option>
-                  {recipes?.map((r) => <option key={r._id} value={r._id}>{r.name}</option>)}
+                  {recipes?.map((r) => (
+                    <option key={r._id} value={r._id}>{r.name}</option>
+                  ))}
                 </select>
               </div>
               <div className="form-group">
-                <label className="form-label">Porsi</label>
-                <input className="form-input" type="number" min="1" value={selectedServings} onChange={(e) => setSelectedServings(e.target.value)} required />
+                <label className="form-label">Porsi yang Dimasak</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  min="1"
+                  value={selectedServings}
+                  onChange={(e) => setSelectedServings(e.target.value)}
+                  required
+                />
               </div>
             </div>
             {error && <div className="form-error">{error}</div>}
-            <button type="submit" className="btn btn-primary btn-sm">Tambah</button>
+            <div style={{ display: "flex", gap: "var(--space-sm)", marginTop: "var(--space-sm)" }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowAddForm(false)}
+              >
+                Batal
+              </button>
+              <button type="submit" className="btn btn-primary btn-sm" disabled={isSubmitting}>
+                {isSubmitting ? "Menambahkan..." : "Tambah ke Menu"}
+              </button>
+            </div>
           </form>
         )}
 
-        {(() => {
-          const dayPlans = mealPlans?.filter((mp) => mp.dateKeyLocal === selectedDate) ?? [];
-          const totalCost = dayPlans.reduce((sum, mp) => sum + mp.estimatedCostIdr, 0);
-
-          if (dayPlans.length > 0) {
-            return (
-              <>
+        {mealPlans === undefined ? (
+          <div style={{ padding: "16px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="skeleton skeleton-row" />
+            <div className="skeleton skeleton-row" />
+          </div>
+        ) : dayPlans.length > 0 ? (
+          <div className="table-container" style={{ marginTop: "var(--space-md)" }}>
+            <table className="editorial-table">
+              <thead>
+                <tr>
+                  <th>Menu Resep</th>
+                  <th>Porsi</th>
+                  <th>Estimasi Biaya</th>
+                  <th className="col-actions">Aksi</th>
+                </tr>
+              </thead>
+              <tbody>
                 {dayPlans.map((mp) => (
-                  <div key={mp._id} className="list-item">
-                    <div className="list-item-icon" style={{ background: "var(--accent-50)", color: "var(--accent-600)" }}>🍽️</div>
-                    <div className="list-item-content">
-                      <div className="list-item-title">{mp.recipe?.name ?? "Resep dihapus"}</div>
-                      <div className="list-item-subtitle">{mp.servings} porsi</div>
-                    </div>
-                    <div className="list-item-right" style={{ display: "flex", alignItems: "center", gap: "var(--space-sm)" }}>
-                      <span style={{ fontSize: "var(--font-size-sm)", fontWeight: 600, color: "var(--accent-600)" }}>
-                        {formatIdr(mp.estimatedCostIdr)}
+                  <tr key={mp._id}>
+                    <td>
+                      <div style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+                        {mp.recipe?.name ?? "Resep telah dihapus"}
+                      </div>
+                    </td>
+                    <td>
+                      <span className="badge badge-accent">
+                        {mp.servings} porsi
                       </span>
-                      <button className="btn btn-ghost btn-sm" onClick={() => removeMealPlan({ id: mp._id })}>🗑️</button>
-                    </div>
-                  </div>
+                    </td>
+                    <td style={{ fontWeight: 600, color: "var(--accent-600)" }}>
+                      {formatIdr(mp.estimatedCostIdr)}
+                    </td>
+                    <td className="col-actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        style={{ color: "var(--error)" }}
+                        onClick={() => promptRemoveMeal({ _id: mp._id, recipeName: mp.recipe?.name ?? "menu" })}
+                        title="Hapus dari jadwal"
+                      >
+                        Hapus
+                      </button>
+                    </td>
+                  </tr>
                 ))}
-                <div style={{ padding: "var(--space-md)", textAlign: "right", fontWeight: 600, color: "var(--accent-600)" }}>
-                  Estimasi total: {formatIdr(totalCost)}
-                </div>
-              </>
-            );
-          }
-
-          return mealPlans ? (
-            <div className="empty-state">
-              <div className="empty-state-icon">📅</div>
-              <div className="empty-state-title">Belum ada menu untuk hari ini</div>
-              <div className="empty-state-description">Tambahkan resep ke rencana menu.</div>
-            </div>
-          ) : (
-            <LoadingSkeleton />
-          );
-        })()}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={2} style={{ textAlign: "right", fontWeight: 600 }}>Total Estimasi Hari Ini:</td>
+                  <td style={{ fontWeight: 700, color: "var(--accent-600)", whiteSpace: "nowrap" }}>
+                    {formatIdr(totalCost)}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-state">
+            <div className="empty-state-title">Belum ada menu untuk hari ini</div>
+            <div className="empty-state-description">Tambahkan resep ke rencana menu hari ini.</div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ─── Shopping Tab ──────────────────────────────────────────────────────
+// ─── 4. Shopping Tab ────────────────────────────────────────────────────
 
 function ShoppingTab() {
   const weekRange = getCurrentWeekRange();
   const weekDates = getWeekDates(weekRange.start);
   const [error, setError] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
 
   const shoppingList = useQuery(api.meals.getShoppingList, { weekKey: weekRange.weekKey });
   const generateList = useMutation(api.meals.generateShoppingList);
@@ -519,6 +1000,7 @@ function ShoppingTab() {
 
   const handleGenerate = async () => {
     setError(null);
+    setIsGenerating(true);
     try {
       await generateList({
         startDate: weekDates[0],
@@ -526,87 +1008,108 @@ function ShoppingTab() {
         weekKey: weekRange.weekKey,
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Error");
+      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
+    } finally {
+      setIsGenerating(false);
     }
   };
 
   return (
     <div>
       <div className="card">
-        <div className="card-header">
-          <h2 className="card-title">🛒 Daftar Belanja — {weekRange.weekKey}</h2>
-          <button className="btn btn-secondary" onClick={handleGenerate}>
-            🔄 Generate dari Menu
+        <div className="card-header" style={{ marginBottom: 0 }}>
+          <div>
+            <h2 className="card-title">Daftar Belanja — {weekRange.weekKey}</h2>
+            <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)", marginTop: 2 }}>
+              Dihitung otomatis dari seluruh menu mingguan
+            </div>
+          </div>
+          <button
+            className="btn btn-secondary"
+            onClick={handleGenerate}
+            disabled={isGenerating}
+          >
+            {isGenerating ? "Menghitung..." : "Generate dari Menu"}
           </button>
         </div>
 
-        {error && <div className="form-error" style={{ marginBottom: "var(--space-md)" }}>{error}</div>}
+        {error && <div className="form-error" style={{ margin: "var(--space-md) 0" }}>{error}</div>}
 
-        {shoppingList && shoppingList.items.length > 0 ? (
-          <>
-            {shoppingList.items.map((item) => (
-              <div
-                key={item._id}
-                className={`shopping-item ${item.checkedAt ? "checked" : ""}`}
-                onClick={() => checkItem({ id: item._id })}
-                style={{ cursor: "pointer" }}
-              >
-                <div className={`checkbox ${item.checkedAt ? "checked" : ""}`}>
-                  {item.checkedAt && "✓"}
-                </div>
-                <span className="shopping-item-name">
-                  {item.ingredient?.name ?? "?"}
-                </span>
-                <span className="shopping-item-quantity">
-                  {item.quantity} {item.unit}
-                </span>
-                <span className="shopping-item-cost">
-                  {formatIdr(item.estimatedCostIdr)}
-                </span>
-              </div>
-            ))}
-            <div style={{
-              padding: "var(--space-md)",
-              textAlign: "right",
-              fontWeight: 700,
-              fontSize: "var(--font-size-lg)",
-              color: "var(--accent-600)",
-              borderTop: "1px solid var(--border-light)",
-              marginTop: "var(--space-sm)",
-            }}>
-              Total: {formatIdr(shoppingList.totalEstimatedCost)}
-            </div>
-          </>
-        ) : shoppingList ? (
+        {shoppingList === undefined ? (
+          <div style={{ padding: "16px 0", display: "flex", flexDirection: "column", gap: 10 }}>
+            <div className="skeleton skeleton-row" />
+            <div className="skeleton skeleton-row" />
+            <div className="skeleton skeleton-row" />
+          </div>
+        ) : shoppingList.items.length > 0 ? (
+          <div className="table-container" style={{ marginTop: "var(--space-md)" }}>
+            <table className="editorial-table">
+              <thead>
+                <tr>
+                  <th style={{ width: 48, textAlign: "center" }}>Beli</th>
+                  <th>Nama Bahan</th>
+                  <th>Jumlah Dibutuhkan</th>
+                  <th style={{ textAlign: "right" }}>Estimasi Biaya</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shoppingList.items.map((item) => (
+                  <tr
+                    key={item._id}
+                    className={item.checkedAt ? "voided" : ""}
+                    onClick={() => checkItem({ id: item._id })}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td style={{ textAlign: "center" }}>
+                      <button
+                        type="button"
+                        className={`checkbox ${item.checkedAt ? "checked" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          checkItem({ id: item._id });
+                        }}
+                        style={{ display: "inline-block", verticalAlign: "middle" }}
+                      >
+                        {item.checkedAt && "✓"}
+                      </button>
+                    </td>
+                    <td>
+                      <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+                        {item.ingredient?.name ?? "?"}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="badge badge-accent">
+                        {item.quantity} {item.unit}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: "right", fontWeight: 600, color: "var(--accent-600)" }}>
+                      {formatIdr(item.estimatedCostIdr)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={3} style={{ textAlign: "right", fontWeight: 700 }}>
+                    Total Estimasi Belanja:
+                  </td>
+                  <td style={{ textAlign: "right", fontWeight: 800, fontSize: "var(--font-size-md)", color: "var(--accent-600)" }}>
+                    {formatIdr(shoppingList.totalEstimatedCost)}
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        ) : (
           <div className="empty-state">
-            <div className="empty-state-icon">🛒</div>
             <div className="empty-state-title">Daftar belanja kosong</div>
             <div className="empty-state-description">
               Tambahkan menu di rencana minggu ini, lalu klik &quot;Generate dari Menu&quot; untuk membuat daftar belanja otomatis.
             </div>
           </div>
-        ) : (
-          <LoadingSkeleton />
         )}
       </div>
-    </div>
-  );
-}
-
-// ─── Loading Skeleton ──────────────────────────────────────────────────
-
-function LoadingSkeleton() {
-  return (
-    <div>
-      {[1, 2, 3].map((i) => (
-        <div key={i} className="list-item">
-          <div className="skeleton" style={{ width: 36, height: 36, borderRadius: "var(--radius-md)" }} />
-          <div className="list-item-content">
-            <div className="skeleton skeleton-text" style={{ width: "40%" }} />
-            <div className="skeleton skeleton-text" style={{ width: "60%" }} />
-          </div>
-        </div>
-      ))}
     </div>
   );
 }

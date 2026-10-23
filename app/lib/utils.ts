@@ -60,8 +60,33 @@ export function formatTimeJakarta(epochMs: number): string {
 }
 
 export function todayKeyLocal(): string {
-  const now = nowJakarta();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  return toJakartaDateKey(Date.now());
+}
+
+export function toJakartaDateKey(epochMs: number): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(epochMs));
+  const year = parts.find((p) => p.type === "year")?.value;
+  const month = parts.find((p) => p.type === "month")?.value;
+  const day = parts.find((p) => p.type === "day")?.value;
+  return `${year}-${month}-${day}`;
+}
+
+export function toJakartaTimeKey(epochMs: number): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIMEZONE,
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(new Date(epochMs));
+  let hour = parts.find((p) => p.type === "hour")?.value;
+  if (hour === "24") hour = "00";
+  const minute = parts.find((p) => p.type === "minute")?.value;
+  return `${hour}:${minute}`;
 }
 
 export function dateKeyToEpoch(dateKey: string): number {

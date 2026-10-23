@@ -118,26 +118,7 @@ export const complete = mutation({
       changedAt: now,
     });
 
-    // If task has repeatRule, create next occurrence
-    if (task.repeatRule && task.dueAt) {
-      const nextDue = calculateNextDue(task.dueAt, task.repeatRule);
-      const nextRemind = task.remindAt
-        ? task.remindAt + (nextDue - task.dueAt)
-        : undefined;
-
-      await ctx.db.insert("tasks", {
-        ownerId: OWNER_ID,
-        title: task.title,
-        description: task.description,
-        dueAt: nextDue,
-        remindAt: nextRemind,
-        timezone: task.timezone,
-        status: "pending",
-        repeatRule: task.repeatRule,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
+    // Mark task as completed
   },
 });
 
@@ -166,6 +147,80 @@ export const cancel = mutation({
       summary: `Tugas dibatalkan: ${task.title}`,
       changedAt: now,
     });
+  },
+});
+
+export const remove = mutation({
+  args: { id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.id);
+    if (!task || task.ownerId !== OWNER_ID) {
+      throw new Error("Tugas tidak ditemukan");
+    }
+
+    await ctx.db.delete(args.id);
+
+    await ctx.db.insert("auditLogs", {
+      ownerId: OWNER_ID,
+      entityType: "task",
+      entityId: args.id,
+      action: "delete",
+      summary: `Tugas dihapus: ${task.title}`,
+      changedAt: Date.now(),
+    });
+  },
+});
+
+export const toggle = mutation({
+  args: { id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.id);
+    if (!task || task.ownerId !== OWNER_ID) {
+      throw new Error("Tugas tidak ditemukan");
+    }
+
+    const now = Date.now();
+    const isCompleted = task.status === "completed";
+    const nextStatus = isCompleted ? "pending" : "completed";
+
+    await ctx.db.patch(args.id, {
+      status: nextStatus,
+      completedAt: nextStatus === "completed" ? now : undefined,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("auditLogs", {
+      ownerId: OWNER_ID,
+      entityType: "task",
+      entityId: args.id,
+      action: nextStatus === "completed" ? "complete" : "reopen",
+      summary: nextStatus === "completed" ? `Tugas diselesaikan: ${task.title}` : `Tugas dibuka kembali: ${task.title}`,
+      changedAt: now,
+    });
+
+    return nextStatus;
+  },
+});
+
+export const clearAll = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_owner", (q) => q.eq("ownerId", OWNER_ID))
+      .collect();
+    for (const task of tasks) {
+      await ctx.db.delete(task._id);
+    }
+    await ctx.db.insert("auditLogs", {
+      ownerId: OWNER_ID,
+      entityType: "task",
+      entityId: "all",
+      action: "delete",
+      summary: `Semua tugas (${tasks.length}) dibersihkan`,
+      changedAt: Date.now(),
+    });
+    return tasks.length;
   },
 });
 

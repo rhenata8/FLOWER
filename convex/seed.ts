@@ -1,4 +1,5 @@
 import { mutation } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 
 const OWNER_ID = "default-user";
 
@@ -107,7 +108,7 @@ export const seedSampleData = mutation({
       { name: "Kecap Manis", unit: "ml", currentPriceIdr: 25 },
     ];
 
-    const ingredientMap: Record<string, any> = {};
+    const ingredientMap: Record<string, { id: Id<"ingredients">; unit: string }> = {};
     for (const ing of ingredientData) {
       const id = await ctx.db.insert("ingredients", {
         ownerId: OWNER_ID,

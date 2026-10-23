@@ -152,6 +152,27 @@ export const voidTransaction = mutation({
   },
 });
 
+export const remove = mutation({
+  args: { id: v.id("transactions") },
+  handler: async (ctx, args) => {
+    const tx = await ctx.db.get(args.id);
+    if (!tx || tx.ownerId !== OWNER_ID) {
+      throw new Error("Transaksi tidak ditemukan");
+    }
+
+    await ctx.db.delete(args.id);
+
+    await ctx.db.insert("auditLogs", {
+      ownerId: OWNER_ID,
+      entityType: "transaction",
+      entityId: args.id,
+      action: "delete",
+      summary: `Transaksi ${tx.kind} ${tx.category}: Rp${tx.amountIdr.toLocaleString("id-ID")} dihapus permanen`,
+      changedAt: Date.now(),
+    });
+  },
+});
+
 // ─── Queries ───────────────────────────────────────────────────────────
 
 export const list = query({
