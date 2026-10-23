@@ -1257,7 +1257,7 @@ function ShoppingTab({ onGoToMenu }: { onGoToMenu: () => void }) {
             className="btn btn-primary"
             onClick={handleOpenGenerate}
           >
-            ✨ Generate Menu 7 Hari (Maks. Rp 120.000)
+            Generate Menu
           </button>
         </div>
 
@@ -1347,7 +1347,7 @@ function ShoppingTab({ onGoToMenu }: { onGoToMenu: () => void }) {
               style={{ marginTop: "var(--space-md)" }}
               onClick={handleOpenGenerate}
             >
-              ✨ Buat Rencana Menu Sekarang
+              Buat Rencana Menu Sekarang
             </button>
           </div>
         )}
