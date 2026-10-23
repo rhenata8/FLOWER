@@ -25,6 +25,7 @@
 
 import { v } from "convex/values";
 import { query } from "./_generated/server";
+import { INCOME_CATEGORIES, isIncomeCategory, resolveExpenseCategory } from "./lib/categories";
 
 const OWNER_ID = "default-user";
 
@@ -109,15 +110,13 @@ export const getTeamStatus = query({
 });
 
 // ─── Quick Transaction Parser ──────────────────────────────────────────
-// Parse format "makanan 28000" or "gaji 5000000"
-
-const EXPENSE_CATEGORIES = ["makanan", "transportasi", "belanja", "parkir", "tagihan"];
-const INCOME_CATEGORIES = ["gaji"];
+// Parse "<kategori atau item> <nominal>", e.g. "makanan 28000", "tissue 5000", "gaji 5000000"
 
 export interface ParsedTransaction {
   isValid: boolean;
   kind?: "income" | "expense";
   category?: string;
+  item?: string;
   amountIdr?: number;
   needsClarification: boolean;
   clarificationMessage?: string;
@@ -125,7 +124,7 @@ export interface ParsedTransaction {
 
 export const parseQuickTransaction = query({
   args: { input: v.string() },
-  handler: async (_, args) => {
+  handler: async (ctx, args): Promise<ParsedTransaction> => {
     const input = args.input.trim().toLowerCase();
     const parts = input.split(/\s+/);
 
@@ -137,37 +136,45 @@ export const parseQuickTransaction = query({
       };
     }
 
-    const category = parts[0];
-    const amountStr = parts[1].replace(/[.,]/g, "");
-    const amount = parseInt(amountStr, 10);
+    const amountToken = parts[parts.length - 1];
+    const label = parts.slice(0, -1).join(" ");
+    const amount = parseInt(amountToken.replace(/[.,]/g, ""), 10);
 
     if (isNaN(amount) || amount <= 0) {
       return {
         isValid: false,
         needsClarification: true,
-        clarificationMessage: `Nominal "${parts[1]}" tidak valid. Gunakan angka bulat positif.`,
+        clarificationMessage: `Nominal "${amountToken}" tidak valid. Gunakan angka bulat positif.`,
       };
     }
 
-    let kind: "income" | "expense";
-    if (EXPENSE_CATEGORIES.includes(category)) {
-      kind = "expense";
-    } else if (INCOME_CATEGORIES.includes(category)) {
-      kind = "income";
-    } else {
+    if (isIncomeCategory(label)) {
+      return { isValid: true, kind: "income", category: label, amountIdr: amount, needsClarification: false };
+    }
+
+    const resolved = await resolveExpenseCategory(ctx, label, OWNER_ID);
+    if (resolved) {
       return {
-        isValid: false,
-        needsClarification: true,
-        clarificationMessage: `Kategori "${category}" tidak dikenali. Pilihan: ${[...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES].join(", ")}`,
+        isValid: true,
+        kind: "expense",
+        category: resolved.name,
+        item: resolved.item,
+        amountIdr: amount,
+        needsClarification: false,
       };
     }
 
+    const categories = await ctx.db
+      .query("budgetCategories")
+      .withIndex("by_owner", (q) => q.eq("ownerId", OWNER_ID))
+      .take(50);
+    const known = [...categories.map((c) => c.name), ...INCOME_CATEGORIES];
     return {
-      isValid: true,
-      kind,
-      category,
-      amountIdr: amount,
-      needsClarification: false,
+      isValid: false,
+      needsClarification: true,
+      clarificationMessage: categories.length
+        ? `"${label}" belum dikenali. Pilihan: ${known.join(", ")}. Tambahkan di Keuangan > Budgeting.`
+        : `Belum ada kategori pengeluaran. Buat dulu di Keuangan > Budgeting (pemasukan: ${INCOME_CATEGORIES.join(", ")}).`,
     };
   },
 });

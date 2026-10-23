@@ -61,7 +61,17 @@ export default defineSchema({
     ownerId: v.string(),
     name: v.string(),
     unit: v.string(), // "gram", "ml", "buah", "bungkus", etc.
-    currentPriceIdr: v.number(), // integer IDR
+    // Price per single unit. For mingguan/bulanan it is derived:
+    // packagePriceIdr / packageContent (can be a decimal).
+    currentPriceIdr: v.number(),
+    // Purchase frequency. Missing = legacy row, treated as "harian".
+    kind: v.optional(
+      v.union(v.literal("harian"), v.literal("mingguan"), v.literal("bulanan"))
+    ),
+    buyQuantity: v.optional(v.number()), // harian: how many units to buy
+    packagePriceIdr: v.optional(v.number()), // mingguan/bulanan: price of one purchase
+    packageContent: v.optional(v.number()), // mingguan/bulanan: units inside one purchase
+    usagePerCook: v.optional(v.number()), // mingguan/bulanan: units used per cooking
     updatedAt: v.number(),
   })
     .index("by_owner", ["ownerId"])
@@ -134,4 +144,47 @@ export default defineSchema({
   })
     .index("by_owner", ["ownerId"])
     .index("by_entity", ["entityType", "entityId"]),
+
+  // ─── Budget Categories (user-managed, drive transaction categories) ──
+  budgetCategories: defineTable({
+    ownerId: v.string(),
+    name: v.string(),
+    items: v.array(v.string()), // things that belong to this category
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_owner", ["ownerId"]),
+
+  // ─── Budgets ────────────────────────────────────────────────────────
+  budgets: defineTable({
+    ownerId: v.string(),
+    name: v.string(),
+    categoryId: v.optional(v.id("budgetCategories")),
+    amountIdr: v.number(), // integer IDR
+    periodDays: v.number(), // the amount covers this many days
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_owner", ["ownerId"])
+    .index("by_category", ["categoryId"]),
+
+  // ─── Savings Goals ──────────────────────────────────────────────────
+  savings: defineTable({
+    ownerId: v.string(),
+    name: v.string(),
+    targetIdr: v.number(), // integer IDR
+    savedIdr: v.number(), // denormalized sum of contributions
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_owner", ["ownerId"]),
+
+  savingContributions: defineTable({
+    ownerId: v.string(),
+    savingId: v.id("savings"),
+    amountIdr: v.number(),
+    note: v.optional(v.string()),
+    occurredAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_owner", ["ownerId"])
+    .index("by_saving", ["savingId"]),
 });

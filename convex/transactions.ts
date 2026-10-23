@@ -1,10 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-
-// ─── Constants ─────────────────────────────────────────────────────────
-const EXPENSE_CATEGORIES = ["makanan", "transportasi", "belanja", "parkir", "tagihan"] as const;
-const INCOME_CATEGORIES = ["gaji"] as const;
-const ALL_CATEGORIES = [...EXPENSE_CATEGORIES, ...INCOME_CATEGORIES] as const;
+import type { QueryCtx } from "./_generated/server";
+import { INCOME_CATEGORIES, resolveExpenseCategory } from "./lib/categories";
 
 const OWNER_ID = "default-user"; // Single user for MVP
 
@@ -15,13 +12,29 @@ function validateAmountIdr(amount: number): void {
   }
 }
 
-function validateCategory(kind: string, category: string): void {
-  if (kind === "expense" && !(EXPENSE_CATEGORIES as readonly string[]).includes(category)) {
-    throw new Error(`Kategori pengeluaran tidak valid: ${category}. Pilihan: ${EXPENSE_CATEGORIES.join(", ")}`);
+/** Returns the canonical category name (and matched item) or throws. */
+async function validateCategory(
+  ctx: QueryCtx,
+  kind: string,
+  category: string
+): Promise<{ name: string; item?: string }> {
+  if (kind === "income") {
+    const match = (INCOME_CATEGORIES as readonly string[]).find(
+      (c) => c === category.trim().toLowerCase()
+    );
+    if (!match) {
+      throw new Error(`Kategori pemasukan tidak valid: ${category}. Pilihan: ${INCOME_CATEGORIES.join(", ")}`);
+    }
+    return { name: match };
   }
-  if (kind === "income" && !(INCOME_CATEGORIES as readonly string[]).includes(category)) {
-    throw new Error(`Kategori pemasukan tidak valid: ${category}. Pilihan: ${INCOME_CATEGORIES.join(", ")}`);
+
+  const resolved = await resolveExpenseCategory(ctx, category, OWNER_ID);
+  if (!resolved) {
+    throw new Error(
+      `Kategori pengeluaran "${category}" belum ada. Buat dulu di Keuangan > Budgeting.`
+    );
   }
+  return resolved;
 }
 
 // ─── Mutations ─────────────────────────────────────────────────────────
@@ -38,7 +51,7 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     validateAmountIdr(args.amountIdr);
-    validateCategory(args.kind, args.category);
+    const resolved = await validateCategory(ctx, args.kind, args.category);
 
     // Check idempotency
     if (args.idempotencyKey) {
@@ -57,10 +70,10 @@ export const create = mutation({
     const id = await ctx.db.insert("transactions", {
       ownerId: OWNER_ID,
       kind: args.kind,
-      category: args.category,
+      category: resolved.name,
       amountIdr: args.amountIdr,
       occurredAt: args.occurredAt,
-      note: args.note,
+      note: args.note ?? resolved.item,
       source: args.source ?? "manual",
       idempotencyKey: args.idempotencyKey,
       createdAt: now,
@@ -73,7 +86,7 @@ export const create = mutation({
       entityType: "transaction",
       entityId: id,
       action: "create",
-      summary: `Transaksi ${args.kind} ${args.category}: Rp${args.amountIdr.toLocaleString("id-ID")}`,
+      summary: `Transaksi ${args.kind} ${resolved.name}: Rp${args.amountIdr.toLocaleString("id-ID")}`,
       changedAt: now,
     });
 
@@ -100,16 +113,17 @@ export const update = mutation({
     }
 
     const kind = args.kind ?? tx.kind;
-    const category = args.category ?? tx.category;
+    let category = args.category ?? tx.category;
     if (args.amountIdr !== undefined) validateAmountIdr(args.amountIdr);
-    if (args.category !== undefined || args.kind !== undefined) {
-      validateCategory(kind, category);
+    // Legacy rows may carry a category that no longer exists; only re-validate on change.
+    if (kind !== tx.kind || category !== tx.category) {
+      category = (await validateCategory(ctx, kind, category)).name;
     }
 
     const now = Date.now();
     const updates: Record<string, unknown> = { updatedAt: now };
     if (args.kind !== undefined) updates.kind = args.kind;
-    if (args.category !== undefined) updates.category = args.category;
+    if (args.category !== undefined || kind !== tx.kind) updates.category = category;
     if (args.amountIdr !== undefined) updates.amountIdr = args.amountIdr;
     if (args.occurredAt !== undefined) updates.occurredAt = args.occurredAt;
     if (args.note !== undefined) updates.note = args.note;
@@ -254,11 +268,13 @@ export const getSummary = query({
 
 export const getCategories = query({
   args: {},
-  handler: async () => {
-    return {
-      expense: [...EXPENSE_CATEGORIES],
-      income: [...INCOME_CATEGORIES],
-      all: [...ALL_CATEGORIES],
-    };
+  handler: async (ctx) => {
+    const categories = await ctx.db
+      .query("budgetCategories")
+      .withIndex("by_owner", (q) => q.eq("ownerId", OWNER_ID))
+      .take(200);
+    const expense = categories.map((c) => c.name).sort((a, b) => a.localeCompare(b, "id"));
+    const income = [...INCOME_CATEGORIES];
+    return { expense, income, all: [...expense, ...income] };
   },
 });

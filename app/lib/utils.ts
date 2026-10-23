@@ -137,16 +137,45 @@ export function getCurrentMonthRange(): { start: number; end: number } {
 }
 
 export function getTodayRange(): { start: number; end: number } {
-  const today = todayKeyLocal();
-  const start = dateKeyToEpoch(today);
-  const tomorrow = new Date(start + 25 * 60 * 60 * 1000); // +25h to account for TZ
-  const tomorrowKey = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, "0")}-${String(tomorrow.getDate()).padStart(2, "0")}`;
-
-  return {
-    start,
-    end: dateKeyToEpoch(tomorrowKey) - 1,
-  };
+  return getDayRange(todayKeyLocal());
 }
+
+/** Exactly one Jakarta calendar day (Jakarta has no DST, so a day is always 24h). */
+export function getDayRange(dateKey: string): { start: number; end: number } {
+  const start = dateKeyToEpoch(dateKey);
+  return { start, end: start + 24 * 60 * 60 * 1000 - 1 };
+}
+
+/** Calendar math on "YYYY-MM-DD" keys, independent of the browser timezone. */
+export function addDaysToDateKey(dateKey: string, days: number): string {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+export function nextDateKeys(startKey: string, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => addDaysToDateKey(startKey, i));
+}
+
+/** "Jumat, 23 Okt 2026" for a "YYYY-MM-DD" key. */
+export function formatDateKeyLong(dateKey: string): string {
+  return new Date(dateKeyToEpoch(dateKey)).toLocaleDateString("id-ID", {
+    timeZone: TIMEZONE,
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export function weekdayShort(dateKey: string): string {
+  return new Date(dateKeyToEpoch(dateKey)).toLocaleDateString("id-ID", {
+    timeZone: TIMEZONE,
+    weekday: "short",
+  });
+}
+
+/** Maximum grocery spend for the generated 7-day menu. */
+export const WEEKLY_MENU_BUDGET_IDR = 120_000;
 
 function getISOWeek(date: Date): number {
   const d = new Date(date);

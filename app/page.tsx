@@ -4,18 +4,13 @@ import { useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import {
   formatIdr,
-  getCurrentWeekRange,
-  getCurrentMonthRange,
   getTodayRange,
   todayKeyLocal,
   relativeTime,
 } from "./lib/utils";
 import { useEffect, useState } from "react";
 
-type RangeMode = "weekly" | "monthly";
-
 export default function DashboardPage() {
-  const [rangeMode, setRangeMode] = useState<RangeMode>("weekly");
   const [dateNumber, setDateNumber] = useState("—");
   const [dateLabel, setDateLabel] = useState("Memuat tanggal");
 
@@ -29,16 +24,13 @@ export default function DashboardPage() {
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
-  const weekRange = getCurrentWeekRange();
-  const monthRange = getCurrentMonthRange();
   const todayRange = getTodayRange();
   const todayKey = todayKeyLocal();
-  const range = rangeMode === "weekly" ? weekRange : monthRange;
 
-  const summary = useQuery(api.transactions.getSummary, { startDate: range.start, endDate: range.end });
+  const summary = useQuery(api.transactions.getSummary, { startDate: todayRange.start, endDate: todayRange.end });
   const todayTasks = useQuery(api.tasks.getTodayTasks, { todayStart: todayRange.start, todayEnd: todayRange.end });
   const todayMeals = useQuery(api.meals.getMealPlanByDate, { dateKeyLocal: todayKey });
-  const recentTransactions = useQuery(api.transactions.list, { startDate: range.start, endDate: range.end });
+  const recentTransactions = useQuery(api.transactions.list, { startDate: todayRange.start, endDate: todayRange.end });
 
   const categories = summary ? Object.entries(summary.byCategory).sort(([, a], [, b]) => b - a) : [];
   const maxCategory = Math.max(1, ...categories.map(([, amount]) => amount));
@@ -51,24 +43,6 @@ export default function DashboardPage() {
           <p className="section-subtitle">Ringkasan aktivitas dan keuangan</p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-          <div className="period-control" role="group" aria-label="Periode ringkasan keuangan">
-            <button
-              type="button"
-              className={rangeMode === "weekly" ? "period-button active" : "period-button"}
-              aria-pressed={rangeMode === "weekly"}
-              onClick={() => setRangeMode("weekly")}
-            >
-              Mingguan
-            </button>
-            <button
-              type="button"
-              className={rangeMode === "monthly" ? "period-button active" : "period-button"}
-              aria-pressed={rangeMode === "monthly"}
-              onClick={() => setRangeMode("monthly")}
-            >
-              Bulanan
-            </button>
-          </div>
           <div className="masthead-date"><span>{dateNumber}</span><p>{dateLabel}</p></div>
         </div>
       </header>
@@ -77,7 +51,7 @@ export default function DashboardPage() {
         <article className="feature-panel">
           <div className="panel-topline"><span className="eyebrow">ARUS KEUANGAN</span></div>
           <div className="balance-block">
-            <p className="metric-label">Saldo bersih periode ini</p>
+            <p className="metric-label">Saldo bersih hari ini</p>
             <div className="feature-value">
               {summary === undefined ? (
                 <div className="skeleton skeleton-stat" />
@@ -111,7 +85,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="feature-foot">
-            <span>Periode {rangeMode === "weekly" ? "minggu ini" : "bulan ini"}</span>
+            <span>Hari ini</span>
             <span className="foot-line" />
           </div>
         </article>
@@ -146,7 +120,7 @@ export default function DashboardPage() {
             <div className="quiet-empty">
               <span className="empty-index">—</span>
               <div>
-                <strong>Belum ada pengeluaran</strong>
+                <strong>Belum ada pengeluaran hari ini</strong>
                 <p>Tambahkan transaksi untuk melihat ringkasan kategori.</p>
               </div>
             </div>
@@ -235,7 +209,7 @@ export default function DashboardPage() {
           </article>
           <article className="day-panel transactions-panel">
             <div className="panel-topline"><span className="eyebrow">JEJAK TERBARU</span></div>
-            <h2>Transaksi<br /><em>terakhir.</em></h2>
+            <h2>Transaksi<br /><em>hari ini.</em></h2>
             {recentTransactions === undefined ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "10px 0" }}>
                 <div className="skeleton skeleton-row" />
@@ -260,7 +234,7 @@ export default function DashboardPage() {
               <div className="quiet-empty compact-empty">
                 <span className="empty-index">—</span>
                 <div>
-                  <strong>Belum ada transaksi</strong>
+                  <strong>Belum ada transaksi hari ini</strong>
                   <p>Catat transaksi pertama di halaman Keuangan.</p>
                 </div>
               </div>

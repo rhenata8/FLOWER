@@ -207,6 +207,10 @@ export const clearAllData = mutation({
       shoppingListItems: 0,
       notificationLogs: 0,
       auditLogs: 0,
+      budgetCategories: 0,
+      budgets: 0,
+      savings: 0,
+      savingContributions: 0,
     };
 
     for await (const doc of ctx.db.query("transactions")) {
@@ -252,6 +256,26 @@ export const clearAllData = mutation({
     for await (const doc of ctx.db.query("auditLogs")) {
       await ctx.db.delete(doc._id);
       deletedCounts.auditLogs++;
+    }
+
+    for await (const doc of ctx.db.query("budgetCategories")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.budgetCategories++;
+    }
+
+    for await (const doc of ctx.db.query("budgets")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.budgets++;
+    }
+
+    for await (const doc of ctx.db.query("savings")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.savings++;
+    }
+
+    for await (const doc of ctx.db.query("savingContributions")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.savingContributions++;
     }
 
     return {
