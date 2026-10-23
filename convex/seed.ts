@@ -193,3 +193,72 @@ export const seedSampleData = mutation({
     };
   },
 });
+
+export const clearAllData = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const deletedCounts: Record<string, number> = {
+      transactions: 0,
+      tasks: 0,
+      recipes: 0,
+      ingredients: 0,
+      recipeIngredients: 0,
+      mealPlans: 0,
+      shoppingListItems: 0,
+      notificationLogs: 0,
+      auditLogs: 0,
+    };
+
+    for await (const doc of ctx.db.query("transactions")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.transactions++;
+    }
+
+    for await (const doc of ctx.db.query("tasks")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.tasks++;
+    }
+
+    for await (const doc of ctx.db.query("recipes")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.recipes++;
+    }
+
+    for await (const doc of ctx.db.query("ingredients")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.ingredients++;
+    }
+
+    for await (const doc of ctx.db.query("recipeIngredients")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.recipeIngredients++;
+    }
+
+    for await (const doc of ctx.db.query("mealPlans")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.mealPlans++;
+    }
+
+    for await (const doc of ctx.db.query("shoppingListItems")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.shoppingListItems++;
+    }
+
+    for await (const doc of ctx.db.query("notificationLogs")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.notificationLogs++;
+    }
+
+    for await (const doc of ctx.db.query("auditLogs")) {
+      await ctx.db.delete(doc._id);
+      deletedCounts.auditLogs++;
+    }
+
+    return {
+      success: true,
+      message: "Semua data transaksi, tugas, resep, bahan, perencana menu, dan riwayat log berhasil dihapus bersih.",
+      deletedCounts,
+    };
+  },
+});
+
