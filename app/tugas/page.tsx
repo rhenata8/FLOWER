@@ -236,7 +236,7 @@ export default function TugasPage() {
       </div>
 
       {/* Quick Stats with Shadow Loading */}
-      <div className="stats-grid">
+      <div className="stats-grid tugas-stats">
         <div className="stat-card">
           <div className="stat-card-label">Hari Ini</div>
           {todayTasks === undefined ? (
@@ -266,14 +266,14 @@ export default function TugasPage() {
       </div>
 
       {/* Filter Tabs */}
-      <div className="tabs">
-        {(["pending", "completed", "cancelled", "all"] as StatusFilter[]).map((s) => (
+      <div className="tabs tugas-filter">
+        {(["pending", "completed", "cancelled"] as StatusFilter[]).map((s) => (
           <button
             key={s}
             className={`tab ${statusFilter === s ? "active" : ""}`}
             onClick={() => setStatusFilter(s)}
           >
-            {s === "pending" ? "Menunggu" : s === "completed" ? "Selesai" : s === "cancelled" ? "Dibatalkan" : "Semua"}
+            {s === "pending" ? "Menunggu" : s === "completed" ? "Selesai" : "Dibatalkan"}
           </button>
         ))}
       </div>

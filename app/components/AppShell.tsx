@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ReactNode } from "react";
+import { QuickAddFab } from "./QuickAddFab";
+import { ThemeToggle } from "./ThemeToggle";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard" },
@@ -35,6 +37,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
+        <ThemeToggle />
       </header>
       <main className="app-main" id="main-content">
         <div className="page-enter">{children}</div>
@@ -57,6 +60,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           })}
         </ul>
       </nav>
+      <QuickAddFab />
     </div>
   );
 }

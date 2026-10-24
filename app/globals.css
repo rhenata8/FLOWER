@@ -2208,4 +2208,242 @@ nextjs-portal, [data-nextjs-dev-tools-button], [data-nextjs-toast-wrapper], #__n
   .filter-bar .dd, .filter-bar .filter-date { min-width: 0; width: 100%; }
 }
 
+/* ─── Perbaikan responsif B, D, E + toggle tema + favicon ────────────
+   Aturan di bawah ini hanya menambah breakpoint mobile, tema gelap, dan
+   komponen baru (toggle tema, tombol tambah cepat). Warna, font, gaya
+   kartu, dan susunan desktop yang sudah ada tidak diubah. */
+
+/* Tema gelap: menimpa token warna halaman, aksen tetap pink Flower. */
+html[data-theme="dark"] {
+  --bg-primary: #171014;
+  --bg-secondary: #2d1f26;
+  --bg-card: #22181d;
+  --bg-hover: #2d1f26;
+  --bg-active: #3a2a32;
+  --accent-50: #2d1f26;
+  --accent-100: #3a2a32;
+  --accent-200: #5a3a48;
+  --accent-300: #c9547d;
+  --accent-400: #dd769e;
+  --accent-500: #e87a9c;
+  --accent-600: #e87a9c;
+  --accent-700: #f2a8c0;
+  --text-primary: #f7eef2;
+  --text-secondary: #d8c2cc;
+  --text-tertiary: #b8a0ab;
+  --text-on-accent: #22181d;
+  --success: #7fb89a;
+  --success-bg: #1e3a2e;
+  --warning: #e0b36a;
+  --warning-bg: #3a2e1a;
+  --error: #e88aa0;
+  --error-bg: #3a222b;
+  --info: #c4b0d8;
+  --info-bg: #2e2540;
+  --income: #7fb89a;
+  --income-bg: #1e3a2e;
+  --expense: #e88aa0;
+  --expense-bg: #3a222b;
+  --border-light: #3a2a32;
+  --border-medium: #4a3540;
+  --border-dark: #f7eef2;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.4);
+  --shadow-accent: 0 4px 16px rgba(232, 122, 156, 0.25);
+}
+
+/* Permukaan yang warnanya ditulis eksplisit di file ini, bukan lewat token. */
+html[data-theme="dark"] .app-topbar { background: rgba(23, 16, 20, 0.96); }
+html[data-theme="dark"] .bottom-nav { background: rgba(34, 24, 29, 0.97); }
+html[data-theme="dark"] .tab.active,
+html[data-theme="dark"] .subtabs button.active { background: var(--bg-card); color: var(--accent-700); }
+html[data-theme="dark"] .feature-page .menu-calendar button { background: var(--bg-card) !important; }
+html[data-theme="dark"] .ai-editorial { background: linear-gradient(120deg, #2d1f26 0%, #22181d 100%); }
+html[data-theme="dark"] .editorial-list-item { background: var(--bg-card); }
+html[data-theme="dark"] .ai-role-row { background: rgba(34, 24, 29, 0.72); }
+html[data-theme="dark"] .dd.open .dd-trigger,
+html[data-theme="dark"] .dd-trigger:focus-visible { background: var(--bg-card); }
+html[data-theme="dark"] .day-summary-grid div,
+html[data-theme="dark"] .stat-chip,
+html[data-theme="dark"] .instructions-box { background: var(--bg-card); }
+
+/* Toggle tema di kanan atas navbar: hanya ikon SVG, tanpa teks. */
+.app-topbar { grid-template-columns: minmax(150px, 0.6fr) minmax(0, 1.8fr) auto; }
+.theme-toggle {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--text-primary);
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.theme-toggle-track {
+  position: relative;
+  width: 68px;
+  height: 38px;
+  border-radius: 13px;
+  flex: 0 0 auto;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-medium);
+  box-shadow: inset 0 1px 4px rgba(67, 31, 48, 0.08);
+  transition: background var(--transition-normal);
+}
+.theme-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 34px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  box-shadow: var(--shadow-sm);
+  display: grid;
+  place-items: center;
+  color: var(--accent-600);
+  transition: transform var(--transition-normal), background var(--transition-normal);
+}
+html[data-theme="dark"] .theme-toggle-thumb { transform: translateX(26px); }
+.theme-toggle-icon { position: absolute; width: 19px; height: 19px; transition: opacity var(--transition-fast), transform var(--transition-normal); }
+.theme-toggle-icon-sun { opacity: 0; transform: rotate(-70deg) scale(0.6); }
+html[data-theme="dark"] .theme-toggle-icon-sun { opacity: 1; transform: rotate(0deg) scale(1); }
+html[data-theme="dark"] .theme-toggle-icon-moon { opacity: 0; transform: rotate(70deg) scale(0.6); }
+
+/* B — Toggle Mingguan/Bulanan: segmented grid 1fr 1fr, tombol aktif
+   mengisi penuh 50% track. Warna, radius, dan gaya teks tidak diubah. */
+.finance-toolbar .tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  width: min(100%, 360px);
+  height: auto;
+  min-height: 48px;
+  padding: 0;
+}
+.finance-toolbar .tab {
+  width: 100%;
+  min-height: 48px;
+  padding-inline: 8px;
+  text-align: center;
+}
+
+/* D — Tombol tambah cepat: hanya tampil di layar sempit, di atas
+   bottom-nav dan safe-area. Panelnya hanya berisi tautan ke halaman
+   yang sudah ada; tidak ada logika data baru. */
+.quick-add-fab,
+.quick-add-panel,
+.quick-add-backdrop { display: none; }
+@media (max-width: 768px) {
+  .quick-add-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 140;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  .quick-add-panel {
+    display: block;
+    position: fixed;
+    right: 16px;
+    bottom: calc(var(--bottom-nav-height) + 88px + env(safe-area-inset-bottom));
+    z-index: 150;
+    width: min(280px, calc(100vw - 32px));
+    background: var(--bg-card);
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 8px;
+  }
+  .quick-add-panel-title {
+    padding: 8px 10px 6px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+  }
+  .quick-add-action {
+    display: block;
+    min-height: 44px;
+    padding: 12px 10px;
+    border-radius: var(--radius-md);
+    text-decoration: none;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+  }
+  .quick-add-action:hover { background: var(--bg-hover); }
+  .quick-add-fab {
+    display: grid;
+    place-items: center;
+    position: fixed;
+    right: 16px;
+    bottom: calc(var(--bottom-nav-height) + 16px + env(safe-area-inset-bottom));
+    z-index: 150;
+    width: 56px;
+    height: 56px;
+    border: 0;
+    border-radius: 50%;
+    background: var(--accent-600);
+    color: var(--text-on-accent);
+    font-size: 28px;
+    line-height: 1;
+    box-shadow: var(--shadow-lg);
+    cursor: pointer;
+  }
+}
+
+/* E — Responsif mobile-first, sebatas breakpoint. */
+html, body { overflow-x: hidden; }
+@media (max-width: 768px) {
+  .app-topbar { grid-template-columns: 1fr auto; }
+  .bottom-nav {
+    padding-bottom: env(safe-area-inset-bottom);
+    height: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+  }
+  .app-main { padding-bottom: calc(var(--bottom-nav-height) + 25px + env(safe-area-inset-bottom)); }
+  .feature-page .btn:not(.btn-sm) { min-height: 44px; }
+  .feature-page .tab { min-height: 44px; }
+  .feature-page .filter-bar .form-input,
+  .feature-page .filter-bar .form-select,
+  .feature-page .filter-bar .dd-trigger { min-height: 44px; }
+  .bottom-nav-link { min-height: 48px; }
+  .tugas-filter.tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    gap: 4px;
+    overflow: visible;
+  }
+  .tugas-filter .tab {
+    min-height: 44px;
+    padding-inline: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    text-align: center;
+  }
+  .feature-page .stat-card-value { white-space: nowrap; }
+}
+@media (max-width: 560px) {
+  .feature-page .tugas-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .feature-page .tugas-stats .stat-card,
+  .feature-page .tugas-stats .stat-card + .stat-card {
+    padding: 12px 8px 12px 0;
+    border-right: 1px solid var(--border-light);
+    border-bottom: 0;
+  }
+  .feature-page .tugas-stats .stat-card:last-child { border-right: 0; }
+  .feature-page .tugas-stats .stat-card-label { font-size: 11px; }
+  .feature-page .tugas-stats .stat-card-value { font-size: clamp(18px, 5.5vw, 24px); }
+}
+
 
