@@ -2,6 +2,7 @@
 
 /* ─── CSS Custom Properties (Warm & Calm Editorial Theme) ───────────── */
 :root {
+  color-scheme: light;
   /* Background palette */
   --bg-primary: #FFF7FA;
   --bg-secondary: #FBE8F0;
@@ -1236,7 +1237,7 @@ body {
 .form-textarea:focus {
   border-color: var(--accent-500);
   box-shadow: 0 0 0 3px rgba(201, 84, 125, 0.16);
-  background: #FFFFFF;
+  background: var(--bg-card);
 }
 
 /* ─── Premium Modern Dropdowns (applies to all select elements) ─── */
@@ -1273,13 +1274,13 @@ select.form-select:hover,
 select.form-select:focus,
 .form-select:focus {
   border-color: var(--accent-600);
-  background-color: #FFFFFF;
+  background-color: var(--bg-card);
   box-shadow: 0 0 0 3px rgba(201, 84, 125, 0.2);
 }
 
 select.form-select option,
 .form-select option {
-  background-color: #FFFFFF;
+  background-color: var(--bg-card);
   color: var(--text-primary);
   padding: 10px 14px;
   font-family: var(--font-family);
@@ -1293,9 +1294,22 @@ select.form-select:disabled,
   background-color: var(--bg-secondary);
 }
 
-.form-input::placeholder {
+.form-input::placeholder,
+.form-textarea::placeholder {
   color: var(--text-tertiary);
+  opacity: 1;
 }
+
+.form-input:-webkit-autofill,
+.form-textarea:-webkit-autofill {
+  -webkit-text-fill-color: var(--text-primary);
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-card) inset;
+  caret-color: var(--text-primary);
+}
+
+.quick-transaction-row { display: flex; gap: var(--space-sm); align-items: flex-start; }
+.quick-category-picker { display: grid; gap: var(--space-sm); margin-top: var(--space-md); }
+.quick-category-picker .form-label { margin-bottom: 0; }
 
 .form-textarea {
   resize: vertical;
@@ -2215,6 +2229,7 @@ nextjs-portal, [data-nextjs-dev-tools-button], [data-nextjs-toast-wrapper], #__n
 
 /* Tema gelap: menimpa token warna halaman, aksen tetap pink Flower. */
 html[data-theme="dark"] {
+  color-scheme: dark;
   --bg-primary: #171014;
   --bg-secondary: #2d1f26;
   --bg-card: #22181d;

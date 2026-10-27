@@ -3,7 +3,8 @@
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { formatDateTimeJakarta, toJakartaDateKey, toJakartaTimeKey, todayKeyLocal } from "../lib/utils";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useQuickCreate } from "../components/useNavigationActions";
 import type { Id } from "../../convex/_generated/dataModel";
 import { ConfirmModal } from "../components/ConfirmModal";
 
@@ -37,6 +38,19 @@ export default function TugasPage() {
   const [editId, setEditId] = useState<Id<"tasks"> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [currentTime, setCurrentTime] = useState<number | null>(null);
+  useEffect(() => {
+    const tick = () => setCurrentTime(Date.now());
+    const frame = window.requestAnimationFrame(tick);
+    const timer = window.setInterval(tick, 60_000);
+    return () => { window.cancelAnimationFrame(frame); window.clearInterval(timer); };
+  }, []);
+  useQuickCreate(useCallback(() => {
+    setForm(initialForm);
+    setEditId(null);
+    setError(null);
+    setModalMode("create");
+  }, []));
 
   // Custom Confirmation Modal state
   const [confirmModal, setConfirmModal] = useState<{
@@ -207,7 +221,7 @@ export default function TugasPage() {
   };
 
   const isOverdue = (task: { dueAt?: number; status: string }) => {
-    return task.status === "pending" && task.dueAt && task.dueAt < Date.now();
+    return task.status === "pending" && task.dueAt && currentTime !== null && task.dueAt < currentTime;
   };
 
   return (
@@ -437,6 +451,7 @@ export default function TugasPage() {
                   className="form-input"
                   type="text"
                   placeholder="Contoh: Bayar tagihan listrik PLN"
+                  autoFocus
                   value={form.title}
                   onChange={(e) => setForm({ ...form, title: e.target.value })}
                   required

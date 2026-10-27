@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery } from "convex/react";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { useQuickCreate } from "../components/useNavigationActions";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Dropdown } from "../components/Dropdown";
@@ -38,6 +39,13 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
   const [filterCategory, setFilterCategory] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [quickInput, setQuickInput] = useState("");
+  const [quickCategory, setQuickCategory] = useState("");
+  const [newQuickCategory, setNewQuickCategory] = useState("");
+  const quickInputRef = useRef<HTMLInputElement>(null);
+  useQuickCreate(useCallback(() => {
+    quickInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    quickInputRef.current?.focus({ preventScroll: true });
+  }, []));
   const [quickError, setQuickError] = useState<string | null>(null);
   const [isQuickSaving, setIsQuickSaving] = useState(false);
 
@@ -75,21 +83,33 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
 
   const expenseCategories = categoryData?.expense ?? [];
   const incomeCategories = categoryData?.income ?? [];
+  const selectedQuickCategory = parsedQuick?.needsCategory
+    ? quickCategory === "__new__" ? newQuickCategory.trim() : quickCategory || parsedQuick.category
+    : parsedQuick?.category;
+  const canQuickSave = Boolean(parsedQuick?.isValid && selectedQuickCategory) && !isQuickSaving;
+  const quickCategoryOptions = [
+    { value: "Belum dikategorikan", label: "Belum dikategorikan" },
+    ...expenseCategories.filter((c) => c !== "Belum dikategorikan").map((c) => ({ value: c, label: c })),
+    { value: "__new__", label: "+ Buat kategori baru" },
+  ];
 
   const handleQuickAdd = async () => {
-    if (!parsedQuick || !parsedQuick.isValid || isQuickSaving) return;
+    if (!parsedQuick || !canQuickSave || !selectedQuickCategory) return;
     setQuickError(null);
     setIsQuickSaving(true);
     try {
       await createTransaction({
         kind: parsedQuick.kind!,
-        category: parsedQuick.category!,
+        category: selectedQuickCategory,
+        createCategory: parsedQuick.needsCategory,
         amountIdr: parsedQuick.amountIdr!,
         occurredAt: dateKeyToEpoch(todayKeyLocal()),
         note: parsedQuick.item,
         source: "chat",
       });
       setQuickInput("");
+      setQuickCategory("");
+      setNewQuickCategory("");
     } catch (err: unknown) {
       setQuickError(err instanceof Error ? err.message : "Terjadi kesalahan");
     } finally {
@@ -202,6 +222,13 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
       {/* Summary */}
       <div className="stats-grid">
         <div className="stat-card">
+          <div className="stat-card-label">Saldo sebelumnya</div>
+          <div className="stat-card-value">
+            {summary === undefined ? <div className="skeleton skeleton-stat" /> : formatIdr(summary.openingBalance)}
+          </div>
+          <p className="card-subtitle">Sisa saldo sebelum periode ini</p>
+        </div>
+        <div className="stat-card">
           <div className="stat-card-label">Pemasukan{scopeLabel}</div>
           <div className="stat-card-value income">
             {summary === undefined ? <div className="skeleton skeleton-stat" /> : formatIdr(summary.totalIncome)}
@@ -214,10 +241,11 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
           </div>
         </div>
         <div className="stat-card">
-          <div className="stat-card-label">Saldo Bersih{scopeLabel}</div>
+          <div className="stat-card-label">Saldo tersedia{scopeLabel}</div>
           <div className="stat-card-value">
-            {summary === undefined ? <div className="skeleton skeleton-stat" /> : formatIdr(summary.netBalance)}
+            {summary === undefined ? <div className="skeleton skeleton-stat" /> : formatIdr(summary.closingBalance)}
           </div>
+          <p className="card-subtitle">Saldo sebelumnya + pemasukan − pengeluaran</p>
         </div>
       </div>
 
@@ -226,28 +254,58 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
         <div className="card-header">
           <h2 className="card-title">Input Cepat</h2>
         </div>
-        <div style={{ display: "flex", gap: "var(--space-sm)", alignItems: "flex-start" }}>
-          <div style={{ flex: 1 }}>
+        <div className="quick-transaction-row">
+          <div style={{ flex: 1, minWidth: 0 }}>
             <input
+              ref={quickInputRef}
               className="form-input"
               placeholder='Ketik: "makanan 28000", "tissue 5000", atau "gaji 5000000"'
               value={quickInput}
+              disabled={isQuickSaving}
               onChange={(e) => {
                 setQuickInput(e.target.value);
                 setQuickError(null);
+                setQuickCategory("");
+                setNewQuickCategory("");
               }}
-              onKeyDown={(e) => e.key === "Enter" && handleQuickAdd()}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) handleQuickAdd();
+              }}
               aria-label="Input cepat transaksi"
             />
             {quickInput.trim().length >= 3 && parsedQuick && (
               <div style={{ marginTop: "var(--space-xs)", fontSize: "var(--font-size-xs)" }}>
                 {parsedQuick.isValid ? (
                   <span style={{ color: "var(--success)" }}>
-                    {parsedQuick.kind === "income" ? "Pemasukan" : "Pengeluaran"}: {parsedQuick.category}
+                    {parsedQuick.kind === "income" ? "Pemasukan" : "Pengeluaran"}: {selectedQuickCategory || "Pilih kategori"}
                     {parsedQuick.item ? ` (${parsedQuick.item})` : ""} {formatIdr(parsedQuick.amountIdr!)}
                   </span>
                 ) : (
                   <span style={{ color: "var(--error)" }}>{parsedQuick.clarificationMessage}</span>
+                )}
+              </div>
+            )}
+            {parsedQuick?.isValid && parsedQuick.needsCategory && (
+              <div className="quick-category-picker">
+                <p className="card-subtitle">“{parsedQuick.item}” belum memiliki kategori. Pilih kategori atau catat dulu sebagai Belum dikategorikan.</p>
+                <label className="form-label" htmlFor="quick-category">Kategori pengeluaran</label>
+                <Dropdown
+                  id="quick-category"
+                  value={quickCategory || "Belum dikategorikan"}
+                  onChange={(value) => { setQuickCategory(value); setQuickError(null); }}
+                  options={quickCategoryOptions}
+                  disabled={isQuickSaving}
+                  ariaLabel="Kategori pengeluaran baru"
+                />
+                {quickCategory === "__new__" && (
+                  <input
+                    className="form-input"
+                    aria-label="Nama kategori baru"
+                    placeholder="Contoh: Kesehatan"
+                    value={newQuickCategory}
+                    disabled={isQuickSaving}
+                    onChange={(e) => { setNewQuickCategory(e.target.value); setQuickError(null); }}
+                  />
                 )}
               </div>
             )}
@@ -258,7 +316,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
           <button
             type="button"
             className="btn btn-primary"
-            disabled={!parsedQuick?.isValid || isQuickSaving}
+            disabled={!canQuickSave}
             onClick={handleQuickAdd}
           >
             {isQuickSaving ? "Menyimpan..." : "Catat"}
@@ -266,11 +324,11 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
         </div>
         {categoryData && expenseCategories.length === 0 && (
           <div className="inline-note" style={{ marginTop: 12 }}>
-            Belum ada kategori pengeluaran. Buat kategori dulu di tab{" "}
+            Item baru tetap bisa dicatat. Pilih atau buat kategorinya langsung di sini; kelola kategori di{" "}
             <button type="button" className="btn btn-ghost btn-sm" style={{ padding: "0 4px", minHeight: 0, color: "var(--accent-700)", fontWeight: 700 }} onClick={onGoBudgeting}>
               Budgeting
             </button>{" "}
-            agar bisa mencatat pengeluaran.
+            kapan saja.
           </div>
         )}
       </div>

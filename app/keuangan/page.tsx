@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useUrlTab } from "../components/useNavigationActions";
 import { BudgetingTab } from "./BudgetingTab";
 import { ExpensesTab } from "./ExpensesTab";
 import { SavingsTab } from "./SavingsTab";
@@ -8,7 +8,7 @@ import { SavingsTab } from "./SavingsTab";
 export type KeuanganTab = "budgeting" | "expenses" | "savings";
 
 export default function KeuanganPage() {
-  const [activeTab, setActiveTab] = useState<KeuanganTab>("budgeting");
+  const [activeTab, setActiveTab] = useUrlTab<KeuanganTab>(["budgeting", "expenses", "savings"], "budgeting");
 
   return (
     <div className="feature-page">

@@ -25,7 +25,7 @@
 
 import { v } from "convex/values";
 import { query } from "./_generated/server";
-import { INCOME_CATEGORIES, isIncomeCategory, resolveExpenseCategory } from "./lib/categories";
+import { isIncomeCategory, resolveExpenseCategory } from "./lib/categories";
 
 const OWNER_ID = "default-user";
 
@@ -120,6 +120,7 @@ export interface ParsedTransaction {
   amountIdr?: number;
   needsClarification: boolean;
   clarificationMessage?: string;
+  needsCategory?: boolean;
 }
 
 export const parseQuickTransaction = query({
@@ -138,9 +139,10 @@ export const parseQuickTransaction = query({
 
     const amountToken = parts[parts.length - 1];
     const label = parts.slice(0, -1).join(" ");
-    const amount = parseInt(amountToken.replace(/[.,]/g, ""), 10);
+    const digits = amountToken.replace(/^rp/i, "").replace(/[.,]/g, "");
+    const amount = /^\d+$/.test(digits) ? Number(digits) : NaN;
 
-    if (isNaN(amount) || amount <= 0) {
+    if (!Number.isSafeInteger(amount) || amount <= 0) {
       return {
         isValid: false,
         needsClarification: true,
@@ -164,17 +166,14 @@ export const parseQuickTransaction = query({
       };
     }
 
-    const categories = await ctx.db
-      .query("budgetCategories")
-      .withIndex("by_owner", (q) => q.eq("ownerId", OWNER_ID))
-      .take(50);
-    const known = [...categories.map((c) => c.name), ...INCOME_CATEGORIES];
     return {
-      isValid: false,
-      needsClarification: true,
-      clarificationMessage: categories.length
-        ? `"${label}" belum dikenali. Pilihan: ${known.join(", ")}. Tambahkan di Keuangan > Budgeting.`
-        : `Belum ada kategori pengeluaran. Buat dulu di Keuangan > Budgeting (pemasukan: ${INCOME_CATEGORIES.join(", ")}).`,
+      isValid: true,
+      kind: "expense",
+      category: "Belum dikategorikan",
+      item: label,
+      amountIdr: amount,
+      needsCategory: true,
+      needsClarification: false,
     };
   },
 });

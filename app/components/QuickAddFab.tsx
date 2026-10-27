@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useState } from "react";
 
 const ACTIONS = [
-  { href: "/keuangan", label: "Pengeluaran" },
-  { href: "/menu", label: "Bahan" },
-  { href: "/menu", label: "Resep / Menu" },
-  { href: "/tugas", label: "Tugas" },
+  { href: "/keuangan?tab=expenses&action=create", label: "Catat Pengeluaran" },
+  { href: "/menu?tab=ingredients&action=create", label: "Tambah Bahan" },
+  { href: "/menu?tab=recipes&action=create", label: "Tambah Resep" },
+  { href: "/tugas?action=create", label: "Tambah Tugas" },
 ];
 
 export function QuickAddFab() {

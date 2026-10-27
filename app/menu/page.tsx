@@ -10,7 +10,8 @@ import {
   formatDateKeyLong,
   WEEKLY_MENU_BUDGET_IDR,
 } from "../lib/utils";
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { useQuickCreate, useUrlTab } from "../components/useNavigationActions";
 import type { Id } from "../../convex/_generated/dataModel";
 import { ConfirmModal } from "../components/ConfirmModal";
 
@@ -34,7 +35,7 @@ const UNITS = [
 ];
 
 export default function MenuPage() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("recipes");
+  const [activeTab, setActiveTab] = useUrlTab<ActiveTab>(["recipes", "ingredients", "shopping", "mealplan"], "recipes");
 
   // Shared Confirm Modal
   const [confirmModal, setConfirmModal] = useState<{
@@ -151,6 +152,7 @@ function RecipesTab({
   }) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
+  useQuickCreate(useCallback(() => setShowForm(true), []));
   const [name, setName] = useState("");
   const [servings, setServings] = useState("2");
   const [instructions, setInstructions] = useState("");
@@ -668,7 +670,7 @@ function IngredientsTab({
     setError(null);
   };
 
-  const openFormWithKind = (k: IngredientKind) => {
+  const openFormWithKind = useCallback((k: IngredientKind) => {
     setKind(k);
     setName("");
     setUnit(k === "harian" ? "ekor" : "siung");
@@ -679,7 +681,9 @@ function IngredientsTab({
     setUsagePerCook("");
     setError(null);
     setShowForm(true);
-  };
+  }, []);
+
+  useQuickCreate(useCallback(() => openFormWithKind("harian"), [openFormWithKind]));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1028,7 +1032,7 @@ function IngredientsTab({
                     style={{
                       marginTop: "var(--space-sm)",
                       padding: "10px",
-                      background: "#ffffff",
+                      background: "var(--bg-card)",
                       borderRadius: "var(--radius-sm)",
                       border: "1px solid var(--accent-200)",
                     }}
