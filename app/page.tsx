@@ -51,12 +51,12 @@ export default function DashboardPage() {
         <article className="feature-panel">
           <div className="panel-topline"><span className="eyebrow">ARUS KEUANGAN</span></div>
           <div className="balance-block">
-            <p className="metric-label">Saldo bersih hari ini</p>
+            <p className="metric-label">Saldo tersedia</p>
             <div className="feature-value">
               {summary === undefined ? (
                 <div className="skeleton skeleton-stat" />
               ) : (
-                formatIdr(summary.netBalance)
+                formatIdr(summary.closingBalance)
               )}
             </div>
           </div>
@@ -85,7 +85,7 @@ export default function DashboardPage() {
             </div>
           </div>
           <div className="feature-foot">
-            <span>Hari ini</span>
+            <span>Termasuk saldo sebelumnya{summary ? ` ${formatIdr(summary.openingBalance)}` : ""}</span>
             <span className="foot-line" />
           </div>
         </article>

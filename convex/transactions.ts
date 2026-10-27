@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
-import { INCOME_CATEGORIES, resolveExpenseCategory } from "./lib/categories";
+import { INCOME_CATEGORIES, isIncomeCategory, resolveExpenseCategory } from "./lib/categories";
 
 const OWNER_ID = "default-user"; // Single user for MVP
 
@@ -48,10 +48,10 @@ export const create = mutation({
     note: v.optional(v.string()),
     source: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
+    createCategory: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     validateAmountIdr(args.amountIdr);
-    const resolved = await validateCategory(ctx, args.kind, args.category);
 
     // Check idempotency
     if (args.idempotencyKey) {
@@ -67,6 +67,20 @@ export const create = mutation({
     }
 
     const now = Date.now();
+    // Create the category and transaction atomically, including the first expense
+    // in an empty account. Existing category names/aliases stay canonical.
+    const categoryName = args.category.trim();
+    if (args.kind === "expense" && args.createCategory) {
+      if (!categoryName || isIncomeCategory(categoryName)) {
+        throw new Error("Gunakan nama kategori pengeluaran yang berbeda dari kategori pemasukan");
+      }
+      if (!(await resolveExpenseCategory(ctx, categoryName, OWNER_ID))) {
+        await ctx.db.insert("budgetCategories", {
+          ownerId: OWNER_ID, name: categoryName, items: [], createdAt: now, updatedAt: now,
+        });
+      }
+    }
+    const resolved = await validateCategory(ctx, args.kind, categoryName);
     const id = await ctx.db.insert("transactions", {
       ownerId: OWNER_ID,
       kind: args.kind,
@@ -198,7 +212,7 @@ export const list = query({
     includeVoided: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    let q = ctx.db
+    const q = ctx.db
       .query("transactions")
       .withIndex("by_owner_date", (q) => {
         const query = q.eq("ownerId", OWNER_ID);
@@ -232,22 +246,29 @@ export const getSummary = query({
     endDate: v.number(),
   },
   handler: async (ctx, args) => {
-    const transactions = await ctx.db
+    if (args.startDate > args.endDate) throw new Error("Rentang tanggal tidak valid");
+    // Include all prior transactions for carry-over. Never copy a balance into a
+    // new transaction: edits, voids and deletes must also update later balances.
+    const transactions = ctx.db
       .query("transactions")
       .withIndex("by_owner_date", (q) =>
         q.eq("ownerId", OWNER_ID)
-          .gte("occurredAt", args.startDate)
           .lte("occurredAt", args.endDate)
-      )
-      .collect();
-
-    const active = transactions.filter((tx) => !tx.voidedAt);
+      );
 
     let totalIncome = 0;
     let totalExpense = 0;
+    let openingBalance = 0;
+    let transactionCount = 0;
     const byCategory: Record<string, number> = {};
 
-    for (const tx of active) {
+    for await (const tx of transactions) {
+      if (tx.voidedAt !== undefined) continue;
+      if (tx.occurredAt < args.startDate) {
+        openingBalance += tx.kind === "income" ? tx.amountIdr : -tx.amountIdr;
+        continue;
+      }
+      transactionCount++;
       if (tx.kind === "income") {
         totalIncome += tx.amountIdr;
       } else {
@@ -260,8 +281,10 @@ export const getSummary = query({
       totalIncome,
       totalExpense,
       netBalance: totalIncome - totalExpense,
+      openingBalance,
+      closingBalance: openingBalance + totalIncome - totalExpense,
       byCategory,
-      transactionCount: active.length,
+      transactionCount,
     };
   },
 });

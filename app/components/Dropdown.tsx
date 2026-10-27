@@ -142,6 +142,8 @@ export function Dropdown({
         ref={triggerRef}
         id={id}
         type="button"
+        role="combobox"
+        aria-autocomplete="none"
         className="dd-trigger"
         aria-haspopup="listbox"
         aria-expanded={open}
