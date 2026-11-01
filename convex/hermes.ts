@@ -25,7 +25,8 @@
 
 import { v } from "convex/values";
 import { query } from "./_generated/server";
-import { isIncomeCategory, resolveExpenseCategory } from "./lib/categories";
+import { isIncomeCategory, resolveBudgetSelection, resolveExpenseCategory } from "./lib/categories";
+import type { Id } from "./_generated/dataModel";
 
 const OWNER_ID = "default-user";
 
@@ -121,6 +122,8 @@ export interface ParsedTransaction {
   needsClarification: boolean;
   clarificationMessage?: string;
   needsCategory?: boolean;
+  budgetId?: Id<"budgets">;
+  budgetOptions?: { id: Id<"budgets">; name: string }[];
 }
 
 export const parseQuickTransaction = query({
@@ -156,11 +159,14 @@ export const parseQuickTransaction = query({
 
     const resolved = await resolveExpenseCategory(ctx, label, OWNER_ID);
     if (resolved) {
+      const selection = await resolveBudgetSelection(ctx, OWNER_ID, resolved.name, label);
       return {
         isValid: true,
         kind: "expense",
         category: resolved.name,
-        item: resolved.item,
+        item: selection.subcategory ?? resolved.item,
+        budgetId: selection.budgetId,
+        budgetOptions: selection.options,
         amountIdr: amount,
         needsClarification: false,
       };

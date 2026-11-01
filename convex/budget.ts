@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { isIncomeCategory } from "./lib/categories";
@@ -155,8 +155,13 @@ export const removeCategory = mutation({
 // ─── Budgets ───────────────────────────────────────────────────────────
 
 export const listBudgets = query({
-  args: {},
-  handler: async (ctx) => {
+  args: { monthKey: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (args.monthKey && !/^\d{4}-(0[1-9]|1[0-2])$/.test(args.monthKey)) throw new Error("Bulan tidak valid: gunakan YYYY-MM");
+    const monthStart = args.monthKey ? Date.parse(`${args.monthKey}-01T00:00:00+07:00`) : null;
+    const [year, month] = (args.monthKey ?? "2000-01").split("-").map(Number);
+    const nextMonth = month === 12 ? `${year + 1}-01` : `${year}-${String(month + 1).padStart(2, "0")}`;
+    const monthEnd = Date.parse(`${nextMonth}-01T00:00:00+07:00`);
     const budgets = await ctx.db
       .query("budgets")
       .withIndex("by_owner", (q) => q.eq("ownerId", OWNER_ID))
@@ -166,40 +171,61 @@ export const listBudgets = query({
     return await Promise.all(
       budgets.map(async (budget) => {
         const category = budget.categoryId ? await ctx.db.get(budget.categoryId) : null;
+        let spentIdr = 0;
+        if (monthStart !== null) {
+          const expenses = ctx.db.query("transactions").withIndex("by_budget_date", q =>
+            q.eq("budgetId", budget._id).gte("occurredAt", monthStart).lt("occurredAt", monthEnd));
+          for await (const tx of expenses) {
+            if (tx.ownerId === OWNER_ID && tx.kind === "expense" && tx.voidedAt === undefined) spentIdr += tx.amountIdr;
+          }
+        }
         return {
           ...budget,
           categoryName: category?.name ?? null,
           perDayIdr: Math.round(budget.amountIdr / budget.periodDays),
+          spentIdr,
+          remainingIdr: budget.amountIdr - spentIdr,
         };
       })
     );
   },
 });
 
+async function assertBudgetName(ctx: MutationCtx, name: string, categoryId?: Id<"budgetCategories">, selfId?: Id<"budgets">) {
+  if (isIncomeCategory(name)) throw new Error("Nama subkategori tidak boleh sama dengan kategori pemasukan");
+  const budgets = await ctx.db.query("budgets").withIndex("by_owner", q => q.eq("ownerId", OWNER_ID)).take(300);
+  if (budgets.some(b => b._id !== selfId && b.name.toLowerCase() === name.toLowerCase())) throw new Error("Nama subkategori sudah memiliki budget");
+  const categories = await ctx.db.query("budgetCategories").withIndex("by_owner", q => q.eq("ownerId", OWNER_ID)).take(200);
+  if (categories.some(c => c._id !== categoryId && (c.name.toLowerCase() === name.toLowerCase() || c.items.some(item => item.toLowerCase() === name.toLowerCase())))) {
+    throw new Error("Nama subkategori sudah dipakai di kategori lain");
+  }
+}
+
 export const createBudget = mutation({
   args: {
     name: v.string(),
     categoryId: v.optional(v.id("budgetCategories")),
     amountIdr: v.number(),
-    periodDays: v.number(),
+    periodDays: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const name = args.name.trim();
     if (!name) throw new Error("Nama budget tidak boleh kosong");
     validatePositiveInt(args.amountIdr, "Nominal budget");
-    validatePositiveInt(args.periodDays, "Jumlah hari");
+    validatePositiveInt(args.periodDays ?? 30, "Jumlah hari");
     if (args.categoryId) {
       const category = await ctx.db.get(args.categoryId);
       if (!category || category.ownerId !== OWNER_ID) throw new Error("Kategori tidak ditemukan");
     }
 
+    await assertBudgetName(ctx, name, args.categoryId);
     const now = Date.now();
     return await ctx.db.insert("budgets", {
       ownerId: OWNER_ID,
       name,
       categoryId: args.categoryId,
       amountIdr: args.amountIdr,
-      periodDays: args.periodDays,
+      periodDays: args.periodDays ?? 30,
       createdAt: now,
       updatedAt: now,
     });
@@ -220,6 +246,9 @@ export const updateBudget = mutation({
     if (!budget || budget.ownerId !== OWNER_ID) throw new Error("Budget tidak ditemukan");
 
     const updates: Record<string, unknown> = { updatedAt: Date.now() };
+    const nextName = args.name?.trim() ?? budget.name;
+    const nextCategory = args.clearCategory ? undefined : args.categoryId ?? budget.categoryId;
+    await assertBudgetName(ctx, nextName, nextCategory, budget._id);
     if (args.name !== undefined) {
       const name = args.name.trim();
       if (!name) throw new Error("Nama budget tidak boleh kosong");
@@ -242,6 +271,25 @@ export const updateBudget = mutation({
     }
 
     await ctx.db.patch(args.id, updates);
+  },
+});
+
+// Explicit, idempotent opt-in for the single historical expense requested by the
+// owner. No bulk matching, no new transaction and no change to cash balances.
+export const linkHistoricalExpense = internalMutation({
+  args: { transactionId: v.id("transactions"), budgetId: v.id("budgets"), expectedAmount: v.number(), expectedDate: v.string() },
+  handler: async (ctx, args) => {
+    const tx = await ctx.db.get(args.transactionId);
+    const budget = await ctx.db.get(args.budgetId);
+    const date = tx ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(tx.occurredAt)) : "";
+    if (!tx || !budget || tx.ownerId !== OWNER_ID || budget.ownerId !== OWNER_ID || tx.kind !== "expense" || tx.voidedAt !== undefined || tx.amountIdr !== args.expectedAmount || date !== args.expectedDate) throw new Error("Transaksi historis tidak sesuai");
+    if (tx.budgetId === budget._id) return { linked: false, alreadyLinked: true };
+    if (tx.budgetId) throw new Error("Transaksi sudah terhubung ke budget lain");
+    const category = budget.categoryId ? await ctx.db.get(budget.categoryId) : null;
+    if (category && category.name !== tx.category) throw new Error("Kategori tidak sesuai");
+    await ctx.db.patch(tx._id, { budgetId: budget._id, subcategory: budget.name });
+    await ctx.db.insert("auditLogs", { ownerId: OWNER_ID, entityType: "transaction", entityId: tx._id, action: "link_budget", summary: "Transaksi terpilih ditautkan ke budget subkategori", changedAt: Date.now() });
+    return { linked: true, alreadyLinked: false };
   },
 });
 

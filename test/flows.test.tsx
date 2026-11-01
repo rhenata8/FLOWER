@@ -39,7 +39,9 @@ vi.mock("convex/react", () => ({
       case "tasks:getTodayTasks": return { today: [], overdue: [], upcoming: [] };
       case "meals:getShoppingList": return { items: [], totalEstimatedCost: 0 };
       case "hermes:parseQuickTransaction": return args?.input
-        ? { isValid: true, kind: "expense", category: "Belum dikategorikan", item: "obat flu", amountIdr: 25_000, needsCategory: true }
+        ? args.input.toLowerCase().startsWith("monthly ")
+          ? { isValid: true, kind: "expense", category: "Monthly", amountIdr: 12_000, budgetOptions: [{ id: "budget-belanja", name: "Belanja" }, { id: "budget-beras", name: "Beras" }] }
+          : { isValid: true, kind: "expense", category: "Belum dikategorikan", item: "obat flu", amountIdr: 25_000, needsCategory: true }
         : undefined;
       default: return [];
     }
@@ -116,6 +118,17 @@ test("income/expense totals stay separate from carried and available balances", 
   render(<KeuanganPage />);
   expect(screen.getByText("Saldo sebelumnya").parentElement?.textContent).toContain("Rp4.000.000");
   expect(screen.getByText("Saldo tersedia").parentElement?.textContent).toContain("Rp3.950.000");
+});
+
+test("category-only quick input cannot charge an arbitrary budget", async () => {
+  navigate("/keuangan?tab=expenses");
+  render(<KeuanganPage />);
+  await userEvent.type(screen.getByRole("textbox", { name: "Input cepat transaksi" }), "Monthly 12000");
+  expect((screen.getByRole("button", { name: "Catat" }) as HTMLButtonElement).disabled).toBe(true);
+  await userEvent.click(screen.getByRole("combobox", { name: "Subkategori budget pengeluaran" }));
+  await userEvent.click(screen.getByRole("option", { name: "Belanja" }));
+  await userEvent.click(screen.getByRole("button", { name: "Catat" }));
+  expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ category: "Monthly", budgetId: "budget-belanja", amountIdr: 12000 }));
 });
 
 test.each([

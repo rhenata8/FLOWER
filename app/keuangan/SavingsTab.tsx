@@ -1,4 +1,5 @@
 "use client";
+import { ActionIcon } from "../components/ActionIcon";
 
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
@@ -273,21 +274,8 @@ export function SavingsTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
 
                   {/* Actions */}
                   <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => openEdit(s)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-sm"
-                      style={{ color: "var(--error)" }}
-                      onClick={() => promptDeleteSaving(s)}
-                    >
-                      Hapus
-                    </button>
+                    <ActionIcon action="edit" label={`Edit saving ${s.name}`} onClick={() => openEdit(s)} />
+                    <ActionIcon action="delete" label={`Hapus saving ${s.name}`} onClick={() => promptDeleteSaving(s)} />
                   </div>
                 </div>
               );
@@ -345,15 +333,7 @@ export function SavingsTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
                       +{formatIdr(c.amountIdr)}
                     </td>
                     <td className="col-actions">
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        style={{ color: "var(--error)" }}
-                        onClick={() => promptDeleteContribution(c)}
-                        title="Hapus setoran"
-                      >
-                        Hapus
-                      </button>
+                      <ActionIcon action="delete" label={`Hapus setoran ${c.savingName}`} onClick={() => promptDeleteContribution(c)} />
                     </td>
                   </tr>
                 ))}
