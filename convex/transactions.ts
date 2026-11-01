@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
-import { INCOME_CATEGORIES, isIncomeCategory, resolveExpenseCategory } from "./lib/categories";
+import { INCOME_CATEGORIES, isIncomeCategory, resolveBudgetSelection, resolveExpenseCategory } from "./lib/categories";
 
 const OWNER_ID = "default-user"; // Single user for MVP
 
@@ -49,6 +49,8 @@ export const create = mutation({
     source: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
     createCategory: v.optional(v.boolean()),
+    budgetId: v.optional(v.id("budgets")),
+    subcategory: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     validateAmountIdr(args.amountIdr);
@@ -81,10 +83,16 @@ export const create = mutation({
       }
     }
     const resolved = await validateCategory(ctx, args.kind, categoryName);
+    const selection = args.kind === "expense"
+      ? await resolveBudgetSelection(ctx, OWNER_ID, resolved.name, args.subcategory ?? resolved.item ?? args.category, args.budgetId)
+      : null;
+    if (selection?.options.length) throw new Error("Pilih subkategori tujuan sebelum mencatat pengeluaran");
     const id = await ctx.db.insert("transactions", {
       ownerId: OWNER_ID,
       kind: args.kind,
       category: resolved.name,
+      budgetId: selection?.budgetId,
+      subcategory: selection?.subcategory,
       amountIdr: args.amountIdr,
       occurredAt: args.occurredAt,
       note: args.note ?? resolved.item,
@@ -116,6 +124,7 @@ export const update = mutation({
     amountIdr: v.optional(v.number()),
     occurredAt: v.optional(v.number()),
     note: v.optional(v.string()),
+    budgetId: v.optional(v.union(v.id("budgets"), v.null())),
   },
   handler: async (ctx, args) => {
     const tx = await ctx.db.get(args.id);
@@ -141,6 +150,20 @@ export const update = mutation({
     if (args.amountIdr !== undefined) updates.amountIdr = args.amountIdr;
     if (args.occurredAt !== undefined) updates.occurredAt = args.occurredAt;
     if (args.note !== undefined) updates.note = args.note;
+    if (kind === "income") {
+      updates.budgetId = undefined;
+      updates.subcategory = undefined;
+    } else if (args.budgetId !== undefined || category !== tx.category || kind !== tx.kind) {
+      if (args.budgetId) {
+        const selection = await resolveBudgetSelection(ctx, OWNER_ID, category, category, args.budgetId);
+        updates.budgetId = selection.budgetId;
+        updates.subcategory = selection.subcategory;
+      } else {
+        // A cleared or changed category must never keep charging the old budget.
+        updates.budgetId = undefined;
+        updates.subcategory = undefined;
+      }
+    }
 
     await ctx.db.patch(args.id, updates);
 

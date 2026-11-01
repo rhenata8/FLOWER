@@ -13,12 +13,15 @@ export default defineSchema({
     source: v.string(), // "manual", "chat", "api"
     voidedAt: v.optional(v.number()),
     idempotencyKey: v.optional(v.string()),
+    budgetId: v.optional(v.id("budgets")),
+    subcategory: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_owner", ["ownerId"])
     .index("by_owner_date", ["ownerId", "occurredAt"])
     .index("by_owner_category", ["ownerId", "category"])
+    .index("by_budget_date", ["budgetId", "occurredAt"])
     .index("by_idempotency", ["ownerId", "idempotencyKey"]),
 
   // ─── Tasks & Reminders ──────────────────────────────────────────────

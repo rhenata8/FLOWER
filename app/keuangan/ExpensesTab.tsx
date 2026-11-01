@@ -3,6 +3,7 @@
 import { useMutation, useQuery } from "convex/react";
 import { useCallback, useRef, useState } from "react";
 import { useQuickCreate } from "../components/useNavigationActions";
+import { ActionIcon } from "../components/ActionIcon";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Dropdown } from "../components/Dropdown";
@@ -29,6 +30,7 @@ interface EditForm {
   amountIdr: string;
   occurredAt: string;
   note: string;
+  budgetId: string;
 }
 
 export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
@@ -41,6 +43,8 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
   const [quickInput, setQuickInput] = useState("");
   const [quickCategory, setQuickCategory] = useState("");
   const [newQuickCategory, setNewQuickCategory] = useState("");
+  const [quickBudgetId, setQuickBudgetId] = useState("");
+  const budgetData = useQuery(api.budget.listBudgets, {});
   const quickInputRef = useRef<HTMLInputElement>(null);
   useQuickCreate(useCallback(() => {
     quickInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -86,7 +90,9 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
   const selectedQuickCategory = parsedQuick?.needsCategory
     ? quickCategory === "__new__" ? newQuickCategory.trim() : quickCategory || parsedQuick.category
     : parsedQuick?.category;
-  const canQuickSave = Boolean(parsedQuick?.isValid && selectedQuickCategory) && !isQuickSaving;
+  const needsBudgetChoice = (parsedQuick?.budgetOptions?.length ?? 0) > 1;
+  const quickBudgets = (budgetData ?? []).filter(b => b.categoryName === selectedQuickCategory);
+  const canQuickSave = Boolean(parsedQuick?.isValid && selectedQuickCategory && (!needsBudgetChoice || quickBudgetId)) && !isQuickSaving;
   const quickCategoryOptions = [
     { value: "Belum dikategorikan", label: "Belum dikategorikan" },
     ...expenseCategories.filter((c) => c !== "Belum dikategorikan").map((c) => ({ value: c, label: c })),
@@ -102,6 +108,8 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
         kind: parsedQuick.kind!,
         category: selectedQuickCategory,
         createCategory: parsedQuick.needsCategory,
+        budgetId: (quickBudgetId || parsedQuick.budgetId || undefined) as Id<"budgets"> | undefined,
+        subcategory: parsedQuick.item,
         amountIdr: parsedQuick.amountIdr!,
         occurredAt: dateKeyToEpoch(todayKeyLocal()),
         note: parsedQuick.item,
@@ -110,6 +118,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
       setQuickInput("");
       setQuickCategory("");
       setNewQuickCategory("");
+      setQuickBudgetId("");
     } catch (err: unknown) {
       setQuickError(err instanceof Error ? err.message : "Terjadi kesalahan");
     } finally {
@@ -124,6 +133,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
       amountIdr: tx.amountIdr.toString(),
       occurredAt: toJakartaDateKey(tx.occurredAt),
       note: tx.note ?? "",
+      budgetId: tx.budgetId ?? "",
     });
     setEditId(tx._id);
     setFormError(null);
@@ -155,6 +165,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
         amountIdr: amount,
         occurredAt: dateKeyToEpoch(form.occurredAt || todayKeyLocal()),
         note: form.note,
+        budgetId: form.kind === "expense" && form.budgetId ? form.budgetId as Id<"budgets"> : null,
       });
       closeEdit();
     } catch (err: unknown) {
@@ -267,6 +278,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
                 setQuickError(null);
                 setQuickCategory("");
                 setNewQuickCategory("");
+                setQuickBudgetId("");
               }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.nativeEvent.isComposing) handleQuickAdd();
@@ -292,7 +304,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
                 <Dropdown
                   id="quick-category"
                   value={quickCategory || "Belum dikategorikan"}
-                  onChange={(value) => { setQuickCategory(value); setQuickError(null); }}
+                  onChange={(value) => { setQuickCategory(value); setQuickBudgetId(""); setQuickError(null); }}
                   options={quickCategoryOptions}
                   disabled={isQuickSaving}
                   ariaLabel="Kategori pengeluaran baru"
@@ -311,6 +323,15 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
             )}
             {quickError && (
               <div className="form-error" style={{ marginTop: 6 }}>{quickError}</div>
+            )}
+            {parsedQuick?.isValid && (needsBudgetChoice || (parsedQuick.needsCategory && quickBudgets.length > 0)) && (
+              <div className="quick-category-picker">
+                <label className="form-label" htmlFor="quick-budget">Subkategori budget{needsBudgetChoice ? " (pilih satu)" : " (opsional)"}</label>
+                <Dropdown id="quick-budget" value={quickBudgetId} onChange={setQuickBudgetId} options={[
+                  { value: "", label: needsBudgetChoice ? "Pilih subkategori..." : "Tanpa budget" },
+                  ...(needsBudgetChoice ? parsedQuick.budgetOptions ?? [] : quickBudgets.map(b => ({ id: b._id, name: b.name }))).map(b => ({ value: b.id, label: b.name })),
+                ]} ariaLabel="Subkategori budget pengeluaran" disabled={isQuickSaving} />
+              </div>
             )}
           </div>
           <button
@@ -414,7 +435,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
                         <span className="badge badge-cancelled" style={{ marginLeft: 6 }}>Dibatalkan</span>
                       )}
                     </td>
-                    <td style={{ fontWeight: 600, textTransform: "capitalize" }}>{tx.category}</td>
+                    <td style={{ fontWeight: 600, textTransform: "capitalize" }}>{tx.category}{tx.subcategory && <small className="transaction-subcategory">{tx.subcategory}</small>}</td>
                     <td style={{ color: "var(--text-secondary)" }}>{tx.note || "—"}</td>
                     <td
                       style={{
@@ -428,13 +449,8 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
                     </td>
                     <td className="col-actions">
                       <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                        <button type="button" className="btn btn-ghost btn-sm" onClick={() => openEdit(tx)}>
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          style={{ color: "var(--error)" }}
+                        <ActionIcon action="edit" label="Edit transaksi" onClick={() => openEdit(tx)} />
+                        <ActionIcon action="delete" label="Hapus transaksi"
                           onClick={() =>
                             openConfirm({
                               title: "Hapus Transaksi",
@@ -445,9 +461,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
                               },
                             })
                           }
-                        >
-                          Hapus
-                        </button>
+                        />
                       </div>
                     </td>
                   </tr>
@@ -515,7 +529,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
                   <button
                     type="button"
                     className={`tab ${form.kind === "expense" ? "active" : ""}`}
-                    onClick={() => setForm({ ...form, kind: "expense", category: expenseCategories[0] ?? "" })}
+                    onClick={() => setForm({ ...form, kind: "expense", category: expenseCategories[0] ?? "", budgetId: "" })}
                     style={{ flex: 1 }}
                   >
                     Pengeluaran
@@ -523,7 +537,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
                   <button
                     type="button"
                     className={`tab ${form.kind === "income" ? "active" : ""}`}
-                    onClick={() => setForm({ ...form, kind: "income", category: incomeCategories[0] ?? "" })}
+                    onClick={() => setForm({ ...form, kind: "income", category: incomeCategories[0] ?? "", budgetId: "" })}
                     style={{ flex: 1 }}
                   >
                     Pemasukan
@@ -535,7 +549,7 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
                 <label className="form-label">Kategori</label>
                 <Dropdown
                   value={form.category}
-                  onChange={(v) => setForm({ ...form, category: v })}
+                  onChange={(v) => setForm({ ...form, category: v, budgetId: "" })}
                   options={editCategoryOptions}
                   placeholder="Pilih kategori..."
                   ariaLabel="Kategori transaksi"
@@ -543,6 +557,13 @@ export function ExpensesTab({ onGoBudgeting }: { onGoBudgeting: () => void }) {
               </div>
 
               <div className="form-group">
+                {form.kind === "expense" && <div className="form-group">
+                  <label className="form-label">Subkategori budget</label>
+                  <Dropdown value={form.budgetId} onChange={budgetId => setForm({ ...form, budgetId })} options={[
+                    { value: "", label: "Tanpa budget" },
+                    ...(budgetData ?? []).filter(b => b.categoryName === form.category).map(b => ({ value: b._id, label: b.name })),
+                  ]} ariaLabel="Subkategori budget transaksi" />
+                </div>}
                 <label className="form-label">Nominal (Rp)</label>
                 <input
                   className="form-input"

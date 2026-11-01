@@ -2,6 +2,8 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { useState } from "react";
+import { ActionIcon } from "../components/ActionIcon";
+import { BudgetList, useBudgetMonth } from "./BudgetList";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Dropdown } from "../components/Dropdown";
@@ -20,7 +22,8 @@ function splitItems(text: string): string[] {
 
 export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
   const categories = useQuery(api.budget.listCategories);
-  const budgets = useQuery(api.budget.listBudgets);
+  const monthKey = useBudgetMonth();
+  const budgets = useQuery(api.budget.listBudgets, { monthKey });
   const savings = useQuery(api.savings.list);
   const contributions = useQuery(api.savings.listContributions, { limit: 6 });
 
@@ -49,7 +52,6 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
   const [bName, setBName] = useState("");
   const [bCategory, setBCategory] = useState("");
   const [bAmount, setBAmount] = useState("");
-  const [bDays, setBDays] = useState("7");
   const [bError, setBError] = useState<string | null>(null);
   const [bSaving, setBSaving] = useState(false);
 
@@ -121,7 +123,6 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
     setBName("");
     setBCategory("");
     setBAmount("");
-    setBDays("7");
     setBError(null);
     setBudgetModal({ mode: "create" });
   };
@@ -130,7 +131,6 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
     setBName(b.name);
     setBCategory(b.categoryId ?? "");
     setBAmount(b.amountIdr.toString());
-    setBDays(b.periodDays.toString());
     setBError(null);
     setBudgetModal({ mode: "edit", id: b._id });
   };
@@ -141,9 +141,7 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
     setBError(null);
 
     const amount = parseIdr(bAmount);
-    const days = parseInt(bDays, 10);
     if (amount === null) return setBError("Nominal harus bilangan bulat positif");
-    if (!Number.isInteger(days) || days <= 0) return setBError("Jumlah hari harus bilangan bulat positif");
 
     setBSaving(true);
     try {
@@ -152,7 +150,6 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
           name: bName,
           categoryId: bCategory ? (bCategory as Id<"budgetCategories">) : undefined,
           amountIdr: amount,
-          periodDays: days,
         });
       } else {
         await updateBudget({
@@ -161,7 +158,6 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
           categoryId: bCategory ? (bCategory as Id<"budgetCategories">) : undefined,
           clearCategory: !bCategory,
           amountIdr: amount,
-          periodDays: days,
         });
       }
       setBudgetModal(null);
@@ -214,103 +210,17 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
     hint: `${formatIdr(s.savedIdr)} dari ${formatIdr(s.targetIdr)}`,
   }));
 
-  const perDayTotal = (budgets ?? []).reduce((sum, b) => sum + b.perDayIdr, 0);
-  const previewAmount = parseIdr(bAmount);
-  const previewDays = parseInt(bDays, 10);
 
   return (
     <div>
       <p className="tab-intro">
-        Atur kebutuhanmu di sini: kategori pengeluaran (beserta apa saja isinya), budget per beberapa hari,
-        dan setoran menabung. Kategori yang kamu buat akan langsung dipakai di Input Cepat.
+        Atur kategori, subkategori, dan budget bulanan di sini. Pengeluaran otomatis mengurangi sisa budget,
+        sementara setoran menabung dicatat terpisah. Pilihan tampilan disimpan di perangkat ini.
       </p>
 
-      <div className="budget-layout">
-        {/* ── Left: budgets + saving ── */}
+      <BudgetList budgets={budgets} monthKey={monthKey} onCreate={openCreateBudget} onEdit={openEditBudget} onDelete={(b) => openConfirm({ title: "Hapus Budget", message: `Hapus budget "${b.name}"? Transaksi dan saldo tersedia tetap tersimpan.`, actionText: "Hapus Budget", onConfirm: async () => { await removeBudget({ id: b._id }); } })} />
+      <div className="budget-layout budget-support-layout">
         <div className="stack">
-          <div className="card">
-            <div className="card-header" style={{ marginBottom: 0 }}>
-              <div>
-                <h2 className="card-title">Daftar Budget</h2>
-                <div className="card-subtitle">Nominal untuk kebutuhan dan dihitung per berapa hari</div>
-              </div>
-              <button type="button" className="btn btn-primary btn-sm" onClick={openCreateBudget}>
-                + Budget
-              </button>
-            </div>
-
-            {budgets === undefined ? (
-              <div style={{ padding: "16px 0", display: "flex", flexDirection: "column", gap: 10 }}>
-                <div className="skeleton skeleton-row" />
-                <div className="skeleton skeleton-row" />
-              </div>
-            ) : budgets.length > 0 ? (
-              <div className="table-container">
-                <table className="editorial-table">
-                  <thead>
-                    <tr>
-                      <th>Kebutuhan</th>
-                      <th>Kategori</th>
-                      <th>Nominal</th>
-                      <th>Per</th>
-                      <th>Setara / hari</th>
-                      <th className="col-actions">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {budgets.map((b) => (
-                      <tr key={b._id}>
-                        <td style={{ fontWeight: 600 }}>{b.name}</td>
-                        <td style={{ textTransform: "capitalize" }}>
-                          {b.categoryName ?? <span className="muted">—</span>}
-                        </td>
-                        <td className="money-strong">{formatIdr(b.amountIdr)}</td>
-                        <td>{b.periodDays} hari</td>
-                        <td>{formatIdr(b.perDayIdr)}</td>
-                        <td className="col-actions">
-                          <div style={{ display: "inline-flex", gap: 6 }}>
-                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => openEditBudget(b)}>
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-ghost btn-sm"
-                              style={{ color: "var(--error)" }}
-                              onClick={() =>
-                                openConfirm({
-                                  title: "Hapus Budget",
-                                  message: `Hapus budget "${b.name}"? Transaksi yang sudah tercatat tidak ikut terhapus.`,
-                                  actionText: "Hapus Budget",
-                                  onConfirm: async () => {
-                                    await removeBudget({ id: b._id });
-                                  },
-                                })
-                              }
-                            >
-                              Hapus
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr>
-                      <td colSpan={4} style={{ textAlign: "right", fontWeight: 600 }}>Total kebutuhan per hari:</td>
-                      <td className="money-strong">{formatIdr(perDayTotal)}</td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            ) : (
-              <div className="empty-state">
-                <div className="empty-state-title">Belum ada budget</div>
-                <div className="empty-state-description">Tambahkan budget pertamamu dengan tombol &quot;+ Budget&quot;.</div>
-              </div>
-            )}
-          </div>
-
           <div className="card">
             <div className="card-header" style={{ marginBottom: 0 }}>
               <div>
@@ -350,10 +260,7 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <span className="money-strong">+{formatIdr(c.amountIdr)}</span>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        style={{ color: "var(--error)" }}
+                      <ActionIcon action="delete" label={`Hapus setoran ${c.savingName}`}
                         onClick={() =>
                           openConfirm({
                             title: "Batalkan Setoran",
@@ -364,9 +271,7 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
                             },
                           })
                         }
-                      >
-                        Hapus
-                      </button>
+                      />
                     </div>
                   </div>
                 ))}
@@ -380,7 +285,7 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
           <div className="card-header" style={{ marginBottom: 0 }}>
             <div>
               <h2 className="card-title">Kategori</h2>
-              <div className="card-subtitle">Tentukan hal apa saja yang masuk tiap kategori</div>
+              <div className="card-subtitle">Kelompokkan subkategori seperti Tissue, Air, atau Belanja</div>
             </div>
             <button type="button" className="btn btn-primary btn-sm" onClick={openCreateCategory}>
               + Kategori
@@ -401,13 +306,8 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
                   <div className="category-card-head">
                     <h3>{c.name}</h3>
                     <div style={{ display: "inline-flex", gap: 4 }}>
-                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => openEditCategory(c)}>
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        style={{ color: "var(--error)" }}
+                      <ActionIcon action="edit" label={`Edit kategori ${c.name}`} onClick={() => openEditCategory(c)} />
+                      <ActionIcon action="delete" label={`Hapus kategori ${c.name}`}
                         onClick={() =>
                           openConfirm({
                             title: "Hapus Kategori",
@@ -418,26 +318,24 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
                             },
                           })
                         }
-                      >
-                        Hapus
-                      </button>
+                      />
                     </div>
                   </div>
 
-                  {c.items.length > 0 ? (
+                  {c.items.length > 0 || budgets?.some(b => b.categoryId === c._id) ? (
                     <div className="item-chips">
-                      {c.items.map((item) => (
+                      {Array.from(new Map([...c.items, ...(budgets ?? []).filter(b => b.categoryId === c._id).map(b => b.name)].map(item => [item.toLowerCase(), item])).values()).map((item) => (
                         <span key={item} className="item-chip">
                           {item}
-                          <button type="button" aria-label={`Hapus ${item}`} onClick={() => dropItem(c, item)}>
+                          {!budgets?.some(b => b.categoryId === c._id && b.name.toLowerCase() === item.toLowerCase()) && <button type="button" aria-label={`Hapus ${item}`} onClick={() => dropItem(c, item)}>
                             ×
-                          </button>
+                          </button>}
                         </span>
                       ))}
                     </div>
                   ) : (
                     <div className="muted" style={{ fontSize: 12.5, marginBottom: 12 }}>
-                      Belum ada isi. Tambahkan hal yang masuk kategori ini.
+                      Belum ada subkategori. Tambahkan subkategori pertama.
                     </div>
                   )}
 
@@ -450,7 +348,7 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
                   >
                     <input
                       className="form-input"
-                      placeholder="Tambah isi, mis. tissue"
+                      placeholder="Tambah subkategori, mis. Tissue"
                       value={newItemByCategory[c._id] ?? ""}
                       onChange={(e) => setNewItemByCategory((prev) => ({ ...prev, [c._id]: e.target.value }))}
                       aria-label={`Tambah isi kategori ${c.name}`}
@@ -519,7 +417,7 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
             <h2 className="modal-title">{budgetModal.mode === "create" ? "Budget Baru" : "Edit Budget"}</h2>
             <form onSubmit={submitBudget}>
               <div className="form-group">
-                <label className="form-label">Nama kebutuhan</label>
+                <label className="form-label">Nama subkategori</label>
                 <input
                   className="form-input"
                   value={bName}
@@ -532,9 +430,9 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
                 <label className="form-label">Kategori</label>
                 <Dropdown value={bCategory} onChange={setBCategory} options={categoryOptions} ariaLabel="Kategori budget" />
               </div>
-              <div className="form-row">
+              <div className="budget-amount-field">
                 <div className="form-group">
-                  <label className="form-label">Nominal (Rp)</label>
+                  <label className="form-label">Budget awal per bulan (Rp)</label>
                   <input
                     className="form-input"
                     inputMode="numeric"
@@ -544,24 +442,8 @@ export function BudgetingTab({ onGoSaving }: { onGoSaving: () => void }) {
                     required
                   />
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Dihitung per berapa hari</label>
-                  <input
-                    className="form-input"
-                    type="number"
-                    min="1"
-                    value={bDays}
-                    onChange={(e) => setBDays(e.target.value)}
-                    required
-                  />
-                </div>
               </div>
-              {previewAmount !== null && Number.isInteger(previewDays) && previewDays > 0 && (
-                <div className="cost-preview">
-                  {formatIdr(previewAmount)} untuk {previewDays} hari ≈{" "}
-                  <strong>{formatIdr(Math.round(previewAmount / previewDays))} / hari</strong>
-                </div>
-              )}
+              <p className="inline-note">Budget berlaku bulanan. Terpakai dihitung ulang setiap tanggal 1; saldo tersedia tetap berlanjut.</p>
               {bError && <div className="form-error" style={{ marginTop: 12 }}>{bError}</div>}
               <div className="modal-actions">
                 <button type="button" className="btn btn-secondary" onClick={() => setBudgetModal(null)}>

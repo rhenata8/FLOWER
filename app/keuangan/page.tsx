@@ -1,4 +1,5 @@
 "use client";
+import "./budgets.css";
 
 import { useUrlTab } from "../components/useNavigationActions";
 import { BudgetingTab } from "./BudgetingTab";
