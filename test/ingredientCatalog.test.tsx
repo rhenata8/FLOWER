@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { RecipeIngredientCatalog } from "../app/menu/RecipeIngredientCatalog";
 import type { Doc, Id } from "../convex/_generated/dataModel";
@@ -43,7 +43,7 @@ test("existing ingredients cannot be selected again; failed saves retain quantit
   expect((screen.getByRole("button", { name: "Tambahkan 1 bahan" }) as HTMLButtonElement).disabled).toBe(false);
 });
 
-test("pending saves block repeated submissions and closing; Escape restores previous focus", async () => {
+test("pending saves block repeated submissions and closing; Escape closes after completion", async () => {
   const user = userEvent.setup();
   let finish!: (result: { addedCount: number; skippedCount: number }) => void;
   mocks.add.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
@@ -60,4 +60,40 @@ test("pending saves block repeated submissions and closing; Escape restores prev
   await screen.findByRole("status");
   await user.keyboard("{Escape}");
   expect(onClose).toHaveBeenCalledOnce();
+});
+
+test("checking an ingredient reveals and focuses its quantity in the same row", async () => {
+  const user = userEvent.setup();
+  render(<RecipeIngredientCatalog recipe={recipe} lines={[]} ingredients={ingredients} onClose={vi.fn()} onRemove={vi.fn()} />);
+  const chickenCheckbox = screen.getByRole("checkbox", { name: "Pilih Dada ayam (kg)" });
+  await user.click(chickenCheckbox);
+  const chickenQuantity = screen.getByRole("spinbutton", { name: "Takaran Dada ayam" });
+  expect(document.activeElement).toBe(chickenQuantity);
+  const chickenRow = chickenCheckbox.closest(".catalog-option") as HTMLElement;
+  expect(within(chickenRow).getByRole("spinbutton", { name: "Takaran Dada ayam" })).toBe(chickenQuantity);
+  expect(within(chickenRow).getByText("kg")).toBeTruthy();
+  expect(screen.getByText("1 takaran belum diisi · isi di baris bahan")).toBeTruthy();
+  await user.type(chickenQuantity, "0.5");
+  await user.click(screen.getByRole("checkbox", { name: "Pilih Garam (gram)" }));
+  expect(document.activeElement).toBe(screen.getByRole("spinbutton", { name: "Takaran Garam" }));
+  expect((chickenQuantity as HTMLInputElement).value).toBe("0.5");
+  await user.click(screen.getByRole("checkbox", { name: "Pilih Garam (gram)" }));
+  expect(screen.queryByRole("spinbutton", { name: "Takaran Garam" })).toBeNull();
+  expect((screen.getByRole("button", { name: "Tambahkan 1 bahan" }) as HTMLButtonElement).disabled).toBe(false);
+});
+
+test("selected filter reveals quantities hidden by search and preserves their values", async () => {
+  const user = userEvent.setup();
+  render(<RecipeIngredientCatalog recipe={recipe} lines={[]} ingredients={ingredients} onClose={vi.fn()} onRemove={vi.fn()} />);
+  await user.click(screen.getByRole("checkbox", { name: "Pilih Dada ayam (kg)" }));
+  await user.type(screen.getByRole("spinbutton", { name: "Takaran Dada ayam" }), "0.5");
+  await user.type(screen.getByRole("searchbox"), "BAWANG");
+  await user.click(screen.getByRole("checkbox", { name: "Pilih Bawang putih (siung)" }));
+  expect(document.activeElement).toBe(screen.getByRole("spinbutton", { name: "Takaran Bawang putih" }));
+  await user.click(screen.getByRole("button", { name: "Dipilih (2)" }));
+  expect(screen.getAllByRole("spinbutton")).toHaveLength(2);
+  expect((screen.getByRole("spinbutton", { name: "Takaran Dada ayam" }) as HTMLInputElement).value).toBe("0.5");
+  await user.click(screen.getByRole("button", { name: "Batal pilih semua" }));
+  expect(screen.queryByRole("spinbutton")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Dipilih/ })).toBeNull();
 });
