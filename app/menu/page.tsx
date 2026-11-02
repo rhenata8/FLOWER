@@ -10,7 +10,8 @@ import {
   formatDateKeyLong,
   WEEKLY_MENU_BUDGET_IDR,
 } from "../lib/utils";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { ActionIcon } from "../components/ActionIcon";
 import { useQuickCreate, useUrlTab } from "../components/useNavigationActions";
 import type { Id } from "../../convex/_generated/dataModel";
 import { ConfirmModal } from "../components/ConfirmModal";
@@ -634,6 +635,8 @@ function IngredientsTab({
   }) => void;
 }) {
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<Id<"ingredients"> | null>(null);
+  const ingredientFormRef = useRef<HTMLDivElement>(null);
   const [filterKind, setFilterKind] = useState<string>("all");
 
   // Step 1: User selects frequency first:
@@ -657,9 +660,11 @@ function IngredientsTab({
 
   const ingredients = useQuery(api.meals.listIngredients);
   const createIngredient = useMutation(api.meals.createIngredient);
+  const updateIngredient = useMutation(api.meals.updateIngredient);
   const removeIngredient = useMutation(api.meals.removeIngredient);
 
   const resetForm = () => {
+    setEditingId(null);
     setName("");
     setUnit(kind === "harian" ? "ekor" : "siung");
     setHarianPrice("");
@@ -671,6 +676,7 @@ function IngredientsTab({
   };
 
   const openFormWithKind = useCallback((k: IngredientKind) => {
+    setEditingId(null);
     setKind(k);
     setName("");
     setUnit(k === "harian" ? "ekor" : "siung");
@@ -712,13 +718,15 @@ function IngredientsTab({
           return;
         }
 
-        await createIngredient({
+        const values = {
           name: trimmedName,
           unit,
           kind: "harian",
           currentPriceIdr: price,
           buyQuantity: buyQty,
-        });
+        } as const;
+        if (editingId) await updateIngredient({ id: editingId, ...values, buyQuantity: buyQty ?? null });
+        else await createIngredient(values);
       } else {
         // Mingguan or Bulanan
         const pkgPrice = parseInt(packagePrice.replace(/\D/g, ""), 10);
@@ -746,14 +754,16 @@ function IngredientsTab({
           return;
         }
 
-        await createIngredient({
+        const values = {
           name: trimmedName,
           unit,
           kind,
           packagePriceIdr: pkgPrice,
           packageContent: pkgContent,
           usagePerCook: cookUsage,
-        });
+        };
+        if (editingId) await updateIngredient({ id: editingId, ...values });
+        else await createIngredient(values);
       }
 
       setShowForm(false);
@@ -763,6 +773,24 @@ function IngredientsTab({
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const openEditIngredient = (ing: NonNullable<typeof ingredients>[number]) => {
+    setEditingId(ing._id);
+    setKind(ing.kind ?? "harian");
+    setName(ing.name);
+    setUnit(ing.unit);
+    setHarianPrice((ing.kind ?? "harian") === "harian" ? ing.currentPriceIdr.toLocaleString("id-ID") : "");
+    setHarianBuyQty(ing.buyQuantity?.toString() ?? "");
+    setPackagePrice(ing.packagePriceIdr?.toLocaleString("id-ID") ?? "");
+    setPackageContent(ing.packageContent?.toString() ?? "");
+    setUsagePerCook(ing.usagePerCook?.toString() ?? "");
+    setError(null);
+    setShowForm(true);
+    window.requestAnimationFrame(() => {
+      ingredientFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      ingredientFormRef.current?.querySelector("input")?.focus({ preventScroll: true });
+    });
   };
 
   const promptDeleteIngredient = (ing: { _id: Id<"ingredients">; name: string }) => {
@@ -826,12 +854,12 @@ function IngredientsTab({
       </div>
 
       {showForm && (
-        <div className="card" style={{ marginBottom: "var(--space-lg)", border: "2px solid var(--accent-500)" }}>
+        <div ref={ingredientFormRef} className="card ingredient-editor" style={{ marginBottom: "var(--space-lg)", border: "2px solid var(--accent-500)", scrollMarginTop: 90 }}>
           <h2 className="card-title" style={{ marginBottom: "var(--space-xs)" }}>
-            Tambah Bahan Baru
+            {editingId ? "Edit Bahan" : "Tambah Bahan Baru"}
           </h2>
           <p className="card-subtitle" style={{ marginBottom: "var(--space-md)" }}>
-            Pilih frekuensi pembelian terlebih dahulu untuk menampilkan formulir yang sesuai
+            {editingId ? "Perbarui data bahan. Bahan yang sama tetap terhubung ke resep dan daftar belanja." : "Pilih frekuensi pembelian terlebih dahulu untuk menampilkan formulir yang sesuai"}
           </p>
 
           {/* STEP 1: USER MEMILIH FREKUENSI PEMBELIAN TERLEBIH DAHULU */}
@@ -955,7 +983,7 @@ function IngredientsTab({
                       value={harianBuyQty}
                       onChange={(e) => setHarianBuyQty(e.target.value)}
                       placeholder="Contoh: 2 atau 500"
-                      required
+                      required={!editingId}
                     />
                   </div>
                 </div>
@@ -1059,7 +1087,7 @@ function IngredientsTab({
                 Batal
               </button>
               <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-                {isSubmitting ? "Menyimpan..." : "Simpan Bahan"}
+                {isSubmitting ? "Menyimpan..." : editingId ? "Simpan Perubahan" : "Simpan Bahan"}
               </button>
             </div>
           </form>
@@ -1143,15 +1171,10 @@ function IngredientsTab({
                         {perCookCalc}
                       </td>
                       <td className="col-actions">
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          style={{ color: "var(--error)" }}
-                          onClick={() => promptDeleteIngredient(ing)}
-                          title="Hapus bahan"
-                        >
-                          Hapus
-                        </button>
+                        <div className="ingredient-actions">
+                          <ActionIcon action="edit" label={`Edit bahan ${ing.name}`} onClick={() => openEditIngredient(ing)} />
+                          <ActionIcon action="delete" label={`Hapus bahan ${ing.name}`} onClick={() => promptDeleteIngredient(ing)} />
+                        </div>
                       </td>
                     </tr>
                   );

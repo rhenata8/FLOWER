@@ -205,7 +205,7 @@ export const updateIngredient = mutation({
     unit: v.optional(v.string()),
     kind: v.optional(ingredientKind),
     currentPriceIdr: v.optional(v.number()),
-    buyQuantity: v.optional(v.number()),
+    buyQuantity: v.optional(v.union(v.number(), v.null())),
     packagePriceIdr: v.optional(v.number()),
     packageContent: v.optional(v.number()),
     usagePerCook: v.optional(v.number()),
@@ -216,28 +216,31 @@ export const updateIngredient = mutation({
       throw new Error("Bahan tidak ditemukan");
     }
 
-    const now = Date.now();
-    const updates: Record<string, unknown> = { updatedAt: now };
-    if (args.name !== undefined) updates.name = args.name.trim();
-    if (args.unit !== undefined) updates.unit = args.unit;
-    if (args.kind !== undefined) updates.kind = args.kind;
-    if (args.buyQuantity !== undefined) updates.buyQuantity = args.buyQuantity;
-    if (args.packagePriceIdr !== undefined) updates.packagePriceIdr = args.packagePriceIdr;
-    if (args.packageContent !== undefined) updates.packageContent = args.packageContent;
-    if (args.usagePerCook !== undefined) updates.usagePerCook = args.usagePerCook;
-
-    if (args.currentPriceIdr !== undefined) {
-      if (args.currentPriceIdr < 0) {
-        throw new Error("Harga harus non-negatif");
-      }
-      updates.currentPriceIdr = args.currentPriceIdr;
-    } else if (args.packagePriceIdr !== undefined && args.packageContent !== undefined) {
-      if (args.packageContent > 0) {
-        updates.currentPriceIdr = args.packagePriceIdr / args.packageContent;
-      }
+    const name = args.name?.trim() ?? ing.name;
+    const unit = args.unit?.trim() ?? ing.unit;
+    const kind = args.kind ?? ing.kind ?? "harian";
+    if (!name) throw new Error("Nama bahan tidak boleh kosong");
+    if (!unit) throw new Error("Satuan bahan tidak boleh kosong");
+    if (unit !== ing.unit) {
+      const linked = await ctx.db.query("recipeIngredients").withIndex("by_ingredient", q => q.eq("ingredientId", args.id)).first();
+      if (linked) throw new Error("Satuan bahan sudah dipakai dalam resep. Lepaskan bahan dari resep terkait sebelum mengganti satuan agar takaran dan biaya tidak salah.");
     }
-
-    await ctx.db.patch(args.id, updates);
+    const base = { name, unit, kind, updatedAt: Date.now() };
+    if (kind === "harian") {
+      const price = args.currentPriceIdr ?? ing.currentPriceIdr;
+      const quantity = args.buyQuantity === null ? undefined : args.buyQuantity ?? ing.buyQuantity;
+      if (!Number.isSafeInteger(price) || price < 0) throw new Error("Harga per satuan harus bilangan bulat non-negatif");
+      if (quantity !== undefined && (!Number.isFinite(quantity) || quantity <= 0)) throw new Error("Jumlah yang dibeli harus lebih dari 0");
+      await ctx.db.patch(args.id, { ...base, currentPriceIdr: price, buyQuantity: quantity, packagePriceIdr: undefined, packageContent: undefined, usagePerCook: undefined });
+    } else {
+      const price = args.packagePriceIdr ?? ing.packagePriceIdr;
+      const content = args.packageContent ?? ing.packageContent;
+      const usage = args.usagePerCook ?? ing.usagePerCook;
+      if (price === undefined || !Number.isSafeInteger(price) || price <= 0) throw new Error("Harga beli harus bilangan bulat positif");
+      if (content === undefined || !Number.isFinite(content) || content <= 0) throw new Error("Isi per pembelian harus lebih dari 0");
+      if (usage === undefined || !Number.isFinite(usage) || usage <= 0 || usage > content) throw new Error("Pemakaian sekali masak harus lebih dari 0 dan tidak boleh melebihi isi per pembelian");
+      await ctx.db.patch(args.id, { ...base, packagePriceIdr: price, packageContent: content, usagePerCook: usage, currentPriceIdr: price / content, buyQuantity: undefined });
+    }
   },
 });
 

@@ -18,9 +18,6 @@
 .budget-remaining small { display: block; font-size: 11px; font-weight: 400; }
 .budget-remaining.over-budget { color: var(--error); }
 .budget-actions { display: flex; gap: 2px; flex-shrink: 0; justify-content: flex-end; }
-.action-icon { border: 0; background: transparent; color: var(--text-secondary); width: 40px; height: 40px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; }
-.action-icon:hover { background: var(--bg-hover); color: var(--accent-700); }
-.action-icon.action-icon-danger { color: var(--error); }
 .budget-meter { height: 5px; background: var(--bg-secondary); border-radius: 9px; margin-top: 9px; overflow: hidden; }
 .budget-meter > div { height: 100%; background: var(--accent-500); border-radius: inherit; }
 .budget-meter .over-budget-fill { background: var(--error); }
