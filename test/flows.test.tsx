@@ -7,8 +7,9 @@ import { QuickAddFab } from "../app/components/QuickAddFab";
 import KeuanganPage from "../app/keuangan/page";
 import MenuPage from "../app/menu/page";
 import TugasPage from "../app/tugas/page";
+import type { Doc } from "../convex/_generated/dataModel";
 
-const mocks = vi.hoisted(() => ({ create: vi.fn().mockResolvedValue("tx-1") }));
+const mocks = vi.hoisted(() => ({ create: vi.fn().mockResolvedValue("tx-1"), ingredients: [] as Doc<"ingredients">[] }));
 
 vi.mock("next/navigation", async () => {
   const { useSyncExternalStore } = await import("react");
@@ -38,6 +39,7 @@ vi.mock("convex/react", () => ({
       case "transactions:getCategories": return { expense: ["Makanan"], income: ["gaji", "bonus", "lainnya"] };
       case "tasks:getTodayTasks": return { today: [], overdue: [], upcoming: [] };
       case "meals:getShoppingList": return { items: [], totalEstimatedCost: 0 };
+      case "meals:listIngredients": return mocks.ingredients;
       case "hermes:parseQuickTransaction": return args?.input
         ? args.input.toLowerCase().startsWith("monthly ")
           ? { isValid: true, kind: "expense", category: "Monthly", amountIdr: 12_000, budgetOptions: [{ id: "budget-belanja", name: "Belanja" }, { id: "budget-beras", name: "Beras" }] }
@@ -56,6 +58,7 @@ function navigate(url: string) {
 }
 
 beforeEach(() => {
+  mocks.ingredients = [];
   window.history.replaceState(null, "", "/");
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => window.setTimeout(() => callback(0), 0));
   vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
@@ -152,4 +155,31 @@ test("task action opens a fresh task form and focuses its title", async () => {
   const title = await screen.findByPlaceholderText("Contoh: Bayar tagihan listrik PLN");
   expect(document.activeElement).toBe(title);
   expect(window.location.search).toBe("");
+});
+
+test("ingredient edit pre-fills daily values and updates the same ingredient ID", async () => {
+  mocks.ingredients = [{ _id: "ingredient-1", name: "dada ayam", unit: "kg", kind: "harian", currentPriceIdr: 40000, buyQuantity: 0.5 }] as Doc<"ingredients">[];
+  navigate("/menu?tab=ingredients");
+  render(<MenuPage />);
+  await userEvent.click(screen.getByRole("button", { name: "Edit bahan dada ayam" }));
+  expect(screen.getByRole("heading", { name: "Edit Bahan" })).toBeTruthy();
+  const name = screen.getByDisplayValue("dada ayam");
+  await userEvent.clear(name);
+  await userEvent.type(name, "Dada ayam fillet");
+  expect(screen.getByDisplayValue("40.000")).toBeTruthy();
+  await userEvent.click(screen.getByRole("button", { name: "Simpan Perubahan" }));
+  expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ id: "ingredient-1", name: "Dada ayam fillet", currentPriceIdr: 40000, buyQuantity: 0.5 }));
+  await waitFor(() => expect(screen.queryByRole("heading", { name: "Edit Bahan" })).toBeNull());
+});
+
+test("packaged ingredient edit pre-fills price/content/usage; cancel writes nothing", async () => {
+  mocks.ingredients = [{ _id: "ingredient-2", name: "Bawang putih", unit: "siung", kind: "mingguan", currentPriceIdr: 1000, packagePriceIdr: 15000, packageContent: 15, usagePerCook: 3 }] as Doc<"ingredients">[];
+  navigate("/menu?tab=ingredients");
+  render(<MenuPage />);
+  await userEvent.click(screen.getByRole("button", { name: "Edit bahan Bawang putih" }));
+  expect(screen.getByDisplayValue("15.000")).toBeTruthy();
+  expect(screen.getByDisplayValue("15")).toBeTruthy();
+  expect(screen.getByDisplayValue("3")).toBeTruthy();
+  await userEvent.click(screen.getAllByRole("button", { name: "Batal" })[0]);
+  expect(mocks.create).not.toHaveBeenCalled();
 });
