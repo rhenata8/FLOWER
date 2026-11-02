@@ -296,11 +296,41 @@ export const addRecipeIngredient = mutation({
   },
 });
 
+// One transaction keeps a multi-selection together; units always come from stored ingredients.
+export const addRecipeIngredients = mutation({
+  args: {
+    recipeId: v.id("recipes"),
+    items: v.array(v.object({ ingredientId: v.id("ingredients"), quantity: v.number() })),
+  },
+  handler: async (ctx, args) => {
+    const recipe = await ctx.db.get(args.recipeId);
+    if (!recipe || recipe.ownerId !== OWNER_ID || recipe.archivedAt) throw new Error("Resep tidak ditemukan");
+    if (!args.items.length || args.items.length > 100) throw new Error("Pilih 1 sampai 100 bahan sekaligus");
+    const existing = await ctx.db.query("recipeIngredients").withIndex("by_recipe", q => q.eq("recipeId", args.recipeId)).take(101);
+    const linked = new Set(existing.map(item => item.ingredientId));
+    let addedCount = 0;
+    for (const item of args.items) {
+      if (!Number.isFinite(item.quantity) || item.quantity <= 0) throw new Error("Jumlah takaran harus lebih dari 0");
+      const ingredient = await ctx.db.get(item.ingredientId);
+      if (!ingredient || ingredient.ownerId !== OWNER_ID) throw new Error("Bahan tidak ditemukan. Muat ulang katalog dan coba lagi.");
+      if (!ingredient.unit.trim()) throw new Error(`Satuan ${ingredient.name} belum diisi. Edit di tab Bahan terlebih dahulu.`);
+      if (linked.has(item.ingredientId)) continue;
+      if (existing.length + addedCount >= 100) throw new Error("Maksimal 100 bahan dalam satu resep");
+      await ctx.db.insert("recipeIngredients", { recipeId: args.recipeId, ingredientId: item.ingredientId, quantity: item.quantity, unit: ingredient.unit });
+      linked.add(item.ingredientId);
+      addedCount++;
+    }
+    return { addedCount, skippedCount: args.items.length - addedCount };
+  },
+});
+
 export const removeRecipeIngredient = mutation({
   args: { id: v.id("recipeIngredients") },
   handler: async (ctx, args) => {
     const ri = await ctx.db.get(args.id);
     if (!ri) throw new Error("Item tidak ditemukan");
+    const recipe = await ctx.db.get(ri.recipeId);
+    if (!recipe || recipe.ownerId !== OWNER_ID) throw new Error("Resep tidak ditemukan");
     await ctx.db.delete(args.id);
   },
 });

@@ -15,6 +15,7 @@ import { ActionIcon } from "../components/ActionIcon";
 import { useQuickCreate, useUrlTab } from "../components/useNavigationActions";
 import type { Id } from "../../convex/_generated/dataModel";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { RecipeIngredientCatalog } from "./RecipeIngredientCatalog";
 
 type ActiveTab = "recipes" | "ingredients" | "shopping" | "mealplan";
 type IngredientKind = "harian" | "mingguan" | "bulanan";
@@ -165,11 +166,6 @@ function RecipesTab({
     _id: Id<"recipes">;
     name: string;
   } | null>(null);
-  const [selectedIngId, setSelectedIngId] = useState<Id<"ingredients"> | "">("");
-  const [ingQuantity, setIngQuantity] = useState("");
-  const [ingUnit, setIngUnit] = useState("gram");
-  const [ingError, setIngError] = useState<string | null>(null);
-
   // Instruction collapse state per recipe
   const [expandedInstructions, setExpandedInstructions] = useState<Record<string, boolean>>({});
 
@@ -177,7 +173,6 @@ function RecipesTab({
   const allIngredients = useQuery(api.meals.listIngredients);
   const createRecipe = useMutation(api.meals.createRecipe);
   const removeRecipe = useMutation(api.meals.removeRecipe);
-  const addRecipeIngredient = useMutation(api.meals.addRecipeIngredient);
   const removeRecipeIngredient = useMutation(api.meals.removeRecipeIngredient);
 
   const toggleInstructions = (id: string) => {
@@ -204,30 +199,6 @@ function RecipesTab({
       setError(err instanceof Error ? err.message : "Terjadi kesalahan");
     } finally {
       setIsSubmitting(false);
-    }
-  };
-
-  const handleAddIngredient = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIngError(null);
-    if (!manageRecipe || !selectedIngId) return;
-
-    const qty = parseFloat(ingQuantity);
-    if (isNaN(qty) || qty <= 0) {
-      setIngError("Jumlah takaran harus lebih dari 0");
-      return;
-    }
-
-    try {
-      await addRecipeIngredient({
-        recipeId: manageRecipe._id,
-        ingredientId: selectedIngId as Id<"ingredients">,
-        quantity: qty,
-        unit: ingUnit,
-      });
-      setIngQuantity("");
-    } catch (err: unknown) {
-      setIngError(err instanceof Error ? err.message : "Gagal menambahkan bahan");
     }
   };
 
@@ -406,8 +377,6 @@ function RecipesTab({
                             style={{ padding: "2px 6px", fontSize: "11px", color: "var(--accent-600)" }}
                             onClick={() => {
                               setManageRecipe({ _id: recipe._id, name: recipe.name });
-                              setSelectedIngId("");
-                              setIngQuantity("");
                             }}
                           >
                             + Kelola Bahan
@@ -489,131 +458,15 @@ function RecipesTab({
         )}
       </div>
 
-      {/* Modal Kelola Bahan untuk Resep */}
       {manageRecipe && (
-        <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal-content" style={{ maxWidth: 560 }}>
-            <h3 className="card-title" style={{ marginBottom: "var(--space-xs)" }}>
-              Kelola Bahan: {manageRecipe.name}
-            </h3>
-            <p className="card-subtitle" style={{ marginBottom: "var(--space-md)" }}>
-              Tambahkan atau hapus bahan yang digunakan pada resep ini
-            </p>
-
-            {/* List of currently linked ingredients */}
-            <div style={{ marginBottom: "var(--space-md)" }}>
-              <strong style={{ fontSize: "var(--font-size-xs)", color: "var(--text-tertiary)", display: "block", marginBottom: 6 }}>
-                BAHAN SAAT INI:
-              </strong>
-              {recipeWithDetail?.ingredients && recipeWithDetail.ingredients.length > 0 ? (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {recipeWithDetail.ingredients.map((ing) => (
-                    <div
-                      key={ing._id}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        padding: "6px 10px",
-                        background: "var(--bg-secondary)",
-                        borderRadius: "var(--radius-sm)",
-                        fontSize: "var(--font-size-xs)",
-                      }}
-                    >
-                      <div>
-                        <strong>{ing.name}</strong> — {ing.quantity} {ing.unit}
-                        <span style={{ color: "var(--accent-600)", marginLeft: 8 }}>
-                          ({formatIdr(ing.costIdr)})
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        style={{ color: "var(--error)", padding: "2px 6px" }}
-                        onClick={() => promptRemoveIngredient(ing._id, ing.name)}
-                      >
-                        Hapus
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={{ fontSize: "var(--font-size-xs)", color: "var(--text-tertiary)" }}>
-                  Belum ada bahan pada resep ini.
-                </p>
-              )}
-            </div>
-
-            {/* Form to add ingredient */}
-            <form onSubmit={handleAddIngredient} style={{ borderTop: "1px dashed var(--border-light)", paddingTop: "var(--space-md)" }}>
-              <strong style={{ fontSize: "var(--font-size-xs)", color: "var(--text-primary)", display: "block", marginBottom: 8 }}>
-                TAMBAH BAHAN KE RESEP INI:
-              </strong>
-              <div className="form-group">
-                <label className="form-label">Pilih Bahan</label>
-                <select
-                  className="form-select"
-                  value={selectedIngId}
-                  onChange={(e) => {
-                    const id = e.target.value as Id<"ingredients">;
-                    setSelectedIngId(id);
-                    const found = allIngredients?.find((i) => i._id === id);
-                    if (found) setIngUnit(found.unit);
-                  }}
-                  required
-                >
-                  <option value="">Pilih bahan masakan...</option>
-                  {allIngredients?.map((ing) => (
-                    <option key={ing._id} value={ing._id}>
-                      {ing.name} ({ing.unit}) — {ing.kind ?? "harian"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label className="form-label">Jumlah Takaran</label>
-                  <input
-                    type="number"
-                    step="any"
-                    min="0.1"
-                    className="form-input"
-                    value={ingQuantity}
-                    onChange={(e) => setIngQuantity(e.target.value)}
-                    placeholder="Contoh: 3 atau 250"
-                    required
-                  />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Satuan</label>
-                  <input
-                    type="text"
-                    className="form-input"
-                    value={ingUnit}
-                    onChange={(e) => setIngUnit(e.target.value)}
-                    required
-                  />
-                </div>
-              </div>
-
-              {ingError && <div className="form-error">{ingError}</div>}
-
-              <div className="modal-actions" style={{ marginTop: "var(--space-md)" }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setManageRecipe(null)}
-                >
-                  Selesai
-                </button>
-                <button type="submit" className="btn btn-primary" disabled={!selectedIngId || !ingQuantity}>
-                  + Tambahkan Bahan
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <RecipeIngredientCatalog
+          key={manageRecipe._id}
+          recipe={manageRecipe}
+          lines={recipeWithDetail?.ingredients}
+          ingredients={allIngredients}
+          onClose={() => setManageRecipe(null)}
+          onRemove={promptRemoveIngredient}
+        />
       )}
     </div>
   );
