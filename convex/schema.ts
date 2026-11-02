@@ -114,6 +114,14 @@ export default defineSchema({
     .index("by_owner_week", ["ownerId", "weekKey"])
     .index("by_owner", ["ownerId"]),
 
+  shoppingPlans: defineTable({
+    ownerId: v.string(),
+    startDate: v.string(),
+    endDate: v.string(),
+    approvedAt: v.number(),
+  }).index("by_owner_approvedAt", ["ownerId", "approvedAt"])
+    .index("by_owner_startDate", ["ownerId", "startDate"]),
+
   // ─── Notification Logs ──────────────────────────────────────────────
   notificationLogs: defineTable({
     ownerId: v.string(),
