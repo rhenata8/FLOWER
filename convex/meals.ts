@@ -1,7 +1,8 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
+import { planShopping, purchaseEstimate, quantityValue, type MenuCandidate } from "../lib/mealPlanning";
 
 const OWNER_ID = "default-user";
 
@@ -18,11 +19,25 @@ export const createRecipe = mutation({
     name: v.string(),
     servings: v.number(),
     instructions: v.optional(v.string()),
+    ingredients: v.optional(v.array(v.object({ ingredientId: v.id("ingredients"), quantity: v.number() }))),
   },
   handler: async (ctx, args) => {
     if (!args.name.trim()) throw new Error("Nama resep tidak boleh kosong");
     if (!Number.isInteger(args.servings) || args.servings <= 0) {
       throw new Error("Porsi harus bilangan bulat positif");
+    }
+
+    const ingredients = [];
+    const seen = new Set<string>();
+    if (args.ingredients && (!args.ingredients.length || args.ingredients.length > 100)) throw new Error("Pilih 1 sampai 100 bahan untuk resep");
+    for (const item of args.ingredients ?? []) {
+      if (!Number.isFinite(item.quantity) || item.quantity <= 0) throw new Error("Takaran harus lebih dari 0");
+      if (seen.has(item.ingredientId)) throw new Error("Bahan yang sama cukup dipilih sekali");
+      seen.add(item.ingredientId);
+      const ingredient = await ctx.db.get(item.ingredientId);
+      if (!ingredient || ingredient.ownerId !== OWNER_ID) throw new Error("Bahan tidak ditemukan");
+      if (!ingredient.unit.trim()) throw new Error(`Satuan ${ingredient.name} belum diisi`);
+      ingredients.push({ ingredientId: item.ingredientId, quantity: item.quantity, unit: ingredient.unit });
     }
 
     const now = Date.now();
@@ -34,6 +49,7 @@ export const createRecipe = mutation({
       createdAt: now,
       updatedAt: now,
     });
+    for (const item of ingredients) await ctx.db.insert("recipeIngredients", { recipeId: id, ...item });
 
     await ctx.db.insert("auditLogs", {
       ownerId: OWNER_ID,
@@ -465,7 +481,7 @@ async function rebuildShoppingList(
   const existingItems = await ctx.db
     .query("shoppingListItems")
     .withIndex("by_owner_week", (q) => q.eq("ownerId", OWNER_ID).eq("weekKey", weekKey))
-    .take(500);
+    .take(1000);
   for (const item of existingItems) {
     await ctx.db.delete(item._id);
   }
@@ -476,7 +492,7 @@ async function rebuildShoppingList(
       ownerId: OWNER_ID,
       weekKey,
       ingredientId: need.ingredientId,
-      quantity: Math.ceil(need.totalQuantity * 100) / 100, // round up to 2 decimals
+      quantity: quantityValue(need.totalQuantity),
       unit: need.unit,
       createdAt: now,
     });
@@ -664,15 +680,12 @@ export const getShoppingList = query({
       .withIndex("by_owner_week", (q) =>
         q.eq("ownerId", OWNER_ID).eq("weekKey", args.weekKey)
       )
-      .collect();
+      .take(1000);
 
     const result = await Promise.all(
       items.map(async (item) => {
         const ingredient = await ctx.db.get(item.ingredientId);
-        const estimatedCostIdr = ingredient
-          ? Math.round(item.quantity * ingredient.currentPriceIdr)
-          : 0;
-        return { ...item, ingredient, estimatedCostIdr };
+        return { ...item, ingredient, ...purchaseEstimate(ingredient, item.quantity) };
       })
     );
 
@@ -733,7 +746,8 @@ export const listRecipesDetailed = query({
 const MENU_DAYS = 7;
 
 function assertDateKey(key: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) {
+  const timestamp = Date.parse(`${key}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key) || !Number.isFinite(timestamp) || new Date(timestamp).toISOString().slice(0, 10) !== key) {
     throw new Error("Format tanggal harus YYYY-MM-DD");
   }
 }
@@ -755,130 +769,69 @@ function mulberry32(seed: number) {
   };
 }
 
-interface MenuCandidate {
-  recipeId: Id<"recipes">;
-  name: string;
-  servings: number;
-  costIdr: number;
-}
-
-/** Recipes that have at least one ingredient, priced for one full cooking (recipe.servings). */
+/** Complete, owned recipes only. Missing ingredients cannot silently become free. */
 async function loadMenuCandidates(ctx: QueryCtx): Promise<MenuCandidate[]> {
-  const recipes = (
-    await ctx.db
-      .query("recipes")
-      .withIndex("by_owner", (q) => q.eq("ownerId", OWNER_ID))
-      .take(200)
-  ).filter((r) => !r.archivedAt);
-
-  const priceCache = new Map<Id<"ingredients">, number>();
+  const recipes = (await ctx.db.query("recipes").withIndex("by_owner", q => q.eq("ownerId", OWNER_ID)).take(200)).filter(recipe => !recipe.archivedAt);
+  const cache = new Map<Id<"ingredients">, Doc<"ingredients"> | null>();
   const candidates: MenuCandidate[] = [];
-
   for (const recipe of recipes) {
-    const recipeIngredients = await ctx.db
-      .query("recipeIngredients")
-      .withIndex("by_recipe", (q) => q.eq("recipeId", recipe._id))
-      .take(100);
-    if (recipeIngredients.length === 0) continue;
-
-    let costIdr = 0;
-    for (const ri of recipeIngredients) {
-      let price = priceCache.get(ri.ingredientId);
-      if (price === undefined) {
-        const ingredient = await ctx.db.get(ri.ingredientId);
-        price = ingredient?.currentPriceIdr ?? 0;
-        priceCache.set(ri.ingredientId, price);
-      }
-      costIdr += Math.round(ri.quantity * price);
+    const rows = await ctx.db.query("recipeIngredients").withIndex("by_recipe", q => q.eq("recipeId", recipe._id)).take(101);
+    if (!rows.length || rows.length > 100 || recipe.servings <= 0) continue;
+    const needs: MenuCandidate["needs"] = [];
+    let complete = true;
+    for (const row of rows) {
+      if (!cache.has(row.ingredientId)) cache.set(row.ingredientId, await ctx.db.get(row.ingredientId));
+      const ingredient = cache.get(row.ingredientId);
+      if (!ingredient || ingredient.ownerId !== OWNER_ID || ingredient.unit !== row.unit || !Number.isFinite(row.quantity) || row.quantity <= 0 || !Number.isFinite(ingredient.currentPriceIdr) || ingredient.currentPriceIdr < 0) { complete = false; break; }
+      needs.push({ ingredientId: ingredient._id, quantity: row.quantity, ingredient: {
+        name: ingredient.name, unit: ingredient.unit, kind: ingredient.kind,
+        currentPriceIdr: ingredient.currentPriceIdr, packagePriceIdr: ingredient.packagePriceIdr, packageContent: ingredient.packageContent,
+      } });
     }
-    candidates.push({
-      recipeId: recipe._id,
-      name: recipe.name,
-      servings: recipe.servings,
-      costIdr,
-    });
+    if (complete) candidates.push({ recipeId: recipe._id, name: recipe.name, servings: recipe.servings, costIdr: needs.reduce((sum, need) => sum + Math.round(need.quantity * need.ingredient.currentPriceIdr), 0), needs });
   }
   return candidates;
 }
 
+export const listMenuCandidates = query({ args: {}, handler: loadMenuCandidates });
+
 export const proposeWeeklyMenu = query({
-  args: {
-    startDate: v.string(), // first day of the 7-day window, "YYYY-MM-DD"
-    budgetIdr: v.number(), // weekly cap
-    seed: v.number(), // client-chosen; a new seed gives a new menu
-    avoid: v.optional(v.string()), // signature of a previous proposal to differ from
-  },
+  args: { startDate: v.string(), budgetIdr: v.number(), seed: v.number(), avoid: v.optional(v.string()) },
   handler: async (ctx, args) => {
     assertDateKey(args.startDate);
-    if (!Number.isInteger(args.budgetIdr) || args.budgetIdr <= 0) {
-      throw new Error("Budget harus bilangan bulat positif");
-    }
-
+    if (!Number.isSafeInteger(args.budgetIdr) || args.budgetIdr <= 0) throw new Error("Budget harus bilangan bulat positif");
     const candidates = await loadMenuCandidates(ctx);
-    if (candidates.length === 0) {
-      return { status: "no_recipes" as const, budgetIdr: args.budgetIdr };
-    }
-
-    const minCost = Math.min(...candidates.map((c) => c.costIdr));
-    if (minCost * MENU_DAYS > args.budgetIdr) {
-      return {
-        status: "over_budget" as const,
-        budgetIdr: args.budgetIdr,
-        minimumTotalIdr: minCost * MENU_DAYS,
-      };
-    }
-
+    if (!candidates.length) return { status: "no_recipes" as const, budgetIdr: args.budgetIdr };
     const rand = mulberry32(args.seed);
-    const dates = Array.from({ length: MENU_DAYS }, (_, i) => addDaysToKey(args.startDate, i));
-
-    const build = (): MenuCandidate[] => {
-      const plan: MenuCandidate[] = [];
-      const used = new Set<string>();
-      let spent = 0;
-
-      for (let day = 0; day < MENU_DAYS; day++) {
-        const remainingDays = MENU_DAYS - 1 - day;
-        // Always leave enough budget to fill the remaining days with the cheapest recipe,
-        // so the plan can never end up above the weekly budget.
-        const maxAllowed = args.budgetIdr - spent - remainingDays * minCost;
-        const allowed = candidates.filter((c) => c.costIdr <= maxAllowed);
-
-        const fresh = allowed.filter((c) => !used.has(c.recipeId));
-        let pool = fresh.length > 0 ? fresh : allowed;
-        const previous = plan[plan.length - 1];
-        const notSameAsYesterday = pool.filter((c) => c.recipeId !== previous?.recipeId);
-        if (notSameAsYesterday.length > 0) pool = notSameAsYesterday;
-
-        const pick = pool[Math.floor(rand() * pool.length)];
-        plan.push(pick);
-        used.add(pick.recipeId);
-        spent += pick.costIdr;
+    const signature = (plan: MenuCandidate[]) => plan.map(item => item.recipeId).join(",");
+    const seeds = candidates.map(candidate => Array<MenuCandidate>(MENU_DAYS).fill(candidate));
+    // Package sharing can make a mixed plan cheaper than repeating one recipe.
+    const cheap = [...candidates].sort((a,b) => a.costIdr - b.costIdr).slice(0, 12);
+    for (let attempt = 0; attempt < 96; attempt++) seeds.push(Array.from({ length: MENU_DAYS }, () => cheap[Math.floor(rand() * cheap.length)]));
+    const priced = seeds.map(plan => ({ plan, total: planShopping(plan).totalIdr })).sort((a,b) => a.total - b.total);
+    const feasible = priced.filter(item => item.total <= args.budgetIdr);
+    if (!feasible.length) return { status: "over_budget" as const, budgetIdr: args.budgetIdr, minimumTotalIdr: priced[0].total };
+    let plan = [...feasible[Math.floor(rand() * feasible.length)].plan];
+    for (let day = 0; day < MENU_DAYS; day++) {
+      const used = new Set(plan.filter((_, i) => i !== day).map(item => item.recipeId));
+      const choices = candidates.map(candidate => ({ candidate, rank: (used.has(candidate.recipeId) ? 1 : 0) + rand() })).sort((a,b) => a.rank - b.rank);
+      for (const { candidate } of choices) {
+        const alternative = plan.map((item, i) => i === day ? candidate : item);
+        if (planShopping(alternative).totalIdr <= args.budgetIdr) { plan = alternative; break; }
       }
-      return plan;
-    };
-
-    let plan = build();
-    let signature = plan.map((c) => c.recipeId).join(",");
-    for (let attempt = 0; attempt < 60 && args.avoid && signature === args.avoid; attempt++) {
-      plan = build();
-      signature = plan.map((c) => c.recipeId).join(",");
     }
-
-    const totalIdr = plan.reduce((sum, c) => sum + c.costIdr, 0);
+    if (args.avoid && signature(plan) === args.avoid) {
+      outer: for (let day = 0; day < MENU_DAYS; day++) for (const candidate of candidates) {
+        if (candidate.recipeId === plan[day].recipeId) continue;
+        const alternative = plan.map((item, i) => i === day ? candidate : item);
+        if (planShopping(alternative).totalIdr <= args.budgetIdr) { plan = alternative; break outer; }
+      }
+    }
+    const totalIdr = planShopping(plan).totalIdr;
     return {
-      status: "ok" as const,
-      budgetIdr: args.budgetIdr,
-      totalIdr,
-      remainingIdr: args.budgetIdr - totalIdr,
-      signature,
-      sameAsPrevious: Boolean(args.avoid) && signature === args.avoid,
-      days: plan.map((c, i) => ({
-        dateKeyLocal: dates[i],
-        recipeId: c.recipeId,
-        recipeName: c.name,
-        servings: c.servings,
-        costIdr: c.costIdr,
-      })),
+      status: "ok" as const, budgetIdr: args.budgetIdr, totalIdr, remainingIdr: args.budgetIdr - totalIdr,
+      signature: signature(plan), sameAsPrevious: Boolean(args.avoid) && signature(plan) === args.avoid,
+      days: plan.map((candidate, i) => ({ dateKeyLocal: addDaysToKey(args.startDate, i), recipeId: candidate.recipeId, recipeName: candidate.name, servings: candidate.servings, costIdr: candidate.costIdr })),
     };
   },
 });
@@ -912,12 +865,12 @@ export const applyWeeklyMenu = mutation({
     // Re-check the budget on the server so a stale client can never exceed it.
     const candidates = await loadMenuCandidates(ctx);
     const byId = new Map(candidates.map((c) => [c.recipeId, c]));
-    let totalIdr = 0;
-    for (const entry of args.entries) {
+    const plan = args.entries.map(entry => {
       const candidate = byId.get(entry.recipeId);
       if (!candidate) throw new Error("Ada resep yang sudah tidak tersedia, generate ulang menu");
-      totalIdr += candidate.costIdr;
-    }
+      return candidate;
+    });
+    const totalIdr = planShopping(plan).totalIdr;
     if (totalIdr > args.budgetIdr) {
       throw new Error(
         `Total belanja Rp${totalIdr.toLocaleString("id-ID")} melebihi budget Rp${args.budgetIdr.toLocaleString("id-ID")}`
@@ -948,6 +901,9 @@ export const applyWeeklyMenu = mutation({
     }
 
     await rebuildShoppingList(ctx, args.startDate, endDate, args.startDate);
+    const savedPlan = await ctx.db.query("shoppingPlans").withIndex("by_owner_startDate", q => q.eq("ownerId", OWNER_ID).eq("startDate", args.startDate)).unique();
+    if (savedPlan) await ctx.db.patch(savedPlan._id, { endDate, approvedAt: now });
+    else await ctx.db.insert("shoppingPlans", { ownerId: OWNER_ID, startDate: args.startDate, endDate, approvedAt: now });
 
     await ctx.db.insert("auditLogs", {
       ownerId: OWNER_ID,
@@ -966,26 +922,24 @@ export const applyWeeklyMenu = mutation({
 export const getActiveShoppingList = query({
   args: {},
   handler: async (ctx) => {
-    const latest = await ctx.db
+    const approved = await ctx.db.query("shoppingPlans").withIndex("by_owner_approvedAt", q => q.eq("ownerId", OWNER_ID)).order("desc").first();
+    const latest = approved ? null : await ctx.db
       .query("shoppingListItems")
       .withIndex("by_owner_week", (q) => q.eq("ownerId", OWNER_ID))
       .order("desc")
       .first();
-    if (!latest) return null;
+    if (!approved && !latest) return null;
 
-    const weekKey = latest.weekKey;
+    const weekKey = approved?.startDate ?? latest!.weekKey;
     const items = await ctx.db
       .query("shoppingListItems")
       .withIndex("by_owner_week", (q) => q.eq("ownerId", OWNER_ID).eq("weekKey", weekKey))
-      .take(300);
+      .take(1000);
 
     const enriched = await Promise.all(
       items.map(async (item) => {
         const ingredient = await ctx.db.get(item.ingredientId);
-        const estimatedCostIdr = ingredient
-          ? Math.round(item.quantity * ingredient.currentPriceIdr)
-          : 0;
-        return { ...item, ingredient, estimatedCostIdr };
+        return { ...item, ingredient, ...purchaseEstimate(ingredient, item.quantity) };
       })
     );
 
@@ -993,7 +947,7 @@ export const getActiveShoppingList = query({
     return {
       weekKey,
       startDate: isDateKey ? weekKey : null,
-      endDate: isDateKey ? addDaysToKey(weekKey, MENU_DAYS - 1) : null,
+      endDate: approved?.endDate ?? (isDateKey ? addDaysToKey(weekKey, MENU_DAYS - 1) : null),
       items: enriched,
       totalEstimatedCost: enriched.reduce((sum, item) => sum + item.estimatedCostIdr, 0),
     };

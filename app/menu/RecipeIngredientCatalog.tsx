@@ -7,6 +7,7 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { ActionIcon } from "../components/ActionIcon";
 import { formatIdr } from "../lib/utils";
 import "./ingredient-catalog.css";
+import { IngredientPicker } from "./IngredientPicker";
 
 type RecipeLine = { _id: Id<"recipeIngredients">; ingredientId: Id<"ingredients">; name: string; quantity: number; unit: string; costIdr: number };
 type Props = {
@@ -16,17 +17,12 @@ type Props = {
   onClose: () => void;
   onRemove: (id: Id<"recipeIngredients">, name: string) => void;
 };
-const frequencies = ["semua", "harian", "mingguan", "bulanan"] as const;
 
 export function RecipeIngredientCatalog({ recipe, lines, ingredients, onClose, onRemove }: Props) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const savingRef = useRef(false);
-  const quantityFocusRef = useRef<Id<"ingredients"> | null>(null);
-  const [search, setSearch] = useState("");
-  const [frequency, setFrequency] = useState<typeof frequencies[number]>("semua");
   const [selected, setSelected] = useState<Record<string, string>>({});
-  const [onlySelected, setOnlySelected] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -57,39 +53,13 @@ export function RecipeIngredientCatalog({ recipe, lines, ingredients, onClose, o
     };
   }, []);
 
-  useEffect(() => {
-    const id = quantityFocusRef.current;
-    if (!id) return;
-    const input = document.getElementById(`${titleId}-${id}`) as HTMLInputElement | null;
-    if (!input) return;
-    quantityFocusRef.current = null;
-    input.focus({ preventScroll: true });
-    input.select();
-    input.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [selected, onlySelected, titleId]);
-
   const linked = new Set(lines?.map(line => line.ingredientId));
   const available = ingredients ?? [];
-  const filtered = available.filter(ingredient => onlySelected ? selected[ingredient._id] !== undefined && !linked.has(ingredient._id) :
-    ingredient.name.toLocaleLowerCase("id").includes(search.trim().toLocaleLowerCase("id")) &&
-    (frequency === "semua" || (ingredient.kind ?? "harian") === frequency)
-  ).sort((a, b) => a.name.localeCompare(b.name, "id"));
   const selectedIds = Object.keys(selected);
   const chosen = available.filter(ingredient => selected[ingredient._id] !== undefined && !linked.has(ingredient._id));
   const unavailable = selectedIds.length !== chosen.length;
   const valid = chosen.length > 0 && !unavailable && chosen.every(ingredient => Number.isFinite(Number(selected[ingredient._id])) && Number(selected[ingredient._id]) > 0);
   const missingQuantities = chosen.filter(ingredient => !Number.isFinite(Number(selected[ingredient._id])) || Number(selected[ingredient._id]) <= 0).length;
-  const toggle = (ingredient: Doc<"ingredients">) => {
-    setError(null);
-    setMessage("");
-    if (selected[ingredient._id] === undefined) quantityFocusRef.current = ingredient._id;
-    setSelected(current => {
-      const next = { ...current };
-      if (next[ingredient._id] !== undefined) delete next[ingredient._id];
-      else next[ingredient._id] = ingredient.usagePerCook ? String(ingredient.usagePerCook) : "";
-      return next;
-    });
-  };
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (savingRef.current || !valid) return;
@@ -98,7 +68,6 @@ export function RecipeIngredientCatalog({ recipe, lines, ingredients, onClose, o
     try {
       const result = await addIngredients({ recipeId: recipe._id, items: chosen.map(ingredient => ({ ingredientId: ingredient._id, quantity: Number(selected[ingredient._id]) })) });
       setSelected({});
-      setOnlySelected(false);
       setMessage(`${result.addedCount} bahan ditambahkan.${result.skippedCount ? ` ${result.skippedCount} bahan sudah ada di resep.` : ""}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Gagal menambahkan bahan. Coba lagi.");
@@ -126,36 +95,7 @@ export function RecipeIngredientCatalog({ recipe, lines, ingredients, onClose, o
               )}
               {!!lines?.length && <div className="catalog-total"><span>Estimasi biaya resep</span><strong>{formatIdr(lines.reduce((total, line) => total + line.costIdr, 0))}</strong></div>}
             </section>
-            <section className="catalog-picker" aria-label="Katalog bahan">
-              <h3>Katalog bahan <span>{available.length}</span></h3>
-              <label className="catalog-search-label">Cari bahan
-                <input type="search" className="form-input" placeholder="Cari ayam, bawang, cabai…" value={search} onChange={event => { setSearch(event.target.value); setOnlySelected(false); }} disabled={saving} />
-              </label>
-              <div className="catalog-filters" role="group" aria-label="Frekuensi bahan">
-                {frequencies.map(kind => <button type="button" key={kind} aria-pressed={!onlySelected && frequency === kind} onClick={() => { setFrequency(kind); setOnlySelected(false); }} disabled={saving}>{kind}</button>)}
-                {selectedIds.length > 0 && <button type="button" aria-pressed={onlySelected} onClick={() => setOnlySelected(current => !current)} disabled={saving}>Dipilih ({selectedIds.length})</button>}
-              </div>
-              {selectedIds.length > 0 && <div className="catalog-selection-summary"><span>{selectedIds.length} bahan dipilih</span><button type="button" className="btn btn-ghost btn-sm" disabled={saving} onClick={() => { setSelected({}); setOnlySelected(false); }}>Batal pilih semua</button></div>}
-              {unavailable && <p className="form-error" role="alert">Ada pilihan yang sudah berubah atau dipakai. Batal pilih semua, lalu pilih kembali.</p>}
-              <div className="catalog-options" tabIndex={0} aria-label="Hasil pencarian bahan" aria-busy={ingredients === undefined}>
-                {ingredients === undefined ? <p className="catalog-empty">Memuat katalog…</p> : !filtered.length ? <p className="catalog-empty">{!available.length ? "Belum ada bahan. Tambahkan dahulu di tab Bahan." : "Tidak ada bahan yang cocok. Coba kata lain atau filter Semua."}</p> : filtered.map(ingredient => {
-                  const used = linked.has(ingredient._id);
-                  const checked = selected[ingredient._id] !== undefined;
-                  return <div key={ingredient._id} className={`catalog-option${checked && !used ? " is-selected" : ""}${used ? " is-used" : ""}`}>
-                    <label className="catalog-option-label">
-                    <input type="checkbox" checked={used || checked} disabled={saving || used || lines === undefined} onChange={() => toggle(ingredient)} aria-label={`Pilih ${ingredient.name} (${ingredient.unit})`} />
-                    <span><strong>{ingredient.name}</strong><small>{ingredient.unit} · {ingredient.kind ?? "harian"}</small></span>
-                    {used && <small className="catalog-used-label">Sudah dipakai</small>}
-                    </label>
-                    {checked && !used && <div className="catalog-quantity">
-                      <label htmlFor={`${titleId}-${ingredient._id}`}>Takaran</label>
-                      <input id={`${titleId}-${ingredient._id}`} aria-label={`Takaran ${ingredient.name}`} className="form-input" type="number" step="any" min="0" required placeholder="Jumlah" value={selected[ingredient._id]} disabled={saving} onChange={event => setSelected(current => ({ ...current, [ingredient._id]: event.target.value }))} />
-                      <span>{ingredient.unit}</span>
-                    </div>}
-                  </div>;
-                })}
-              </div>
-            </section>
+            <IngredientPicker ingredients={ingredients} selected={selected} linkedIds={lines?.map(line => line.ingredientId)} disabled={saving || lines === undefined} onChange={next => { setSelected(next); setError(null); setMessage(""); }} />
           </div>
           <footer className="catalog-footer">
             <div aria-live="polite">{error ? <p className="form-error" role="alert">{error}</p> : message ? <p className="catalog-success" role="status">{message}</p> : <p>{missingQuantities ? `${missingQuantities} takaran belum diisi · isi di baris bahan` : chosen.length ? `${chosen.length} bahan siap ditambahkan` : "Bisa pilih beberapa bahan sekaligus."}</p>}</div>

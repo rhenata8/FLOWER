@@ -39,6 +39,7 @@ vi.mock("convex/react", () => ({
       case "transactions:getCategories": return { expense: ["Makanan"], income: ["gaji", "bonus", "lainnya"] };
       case "tasks:getTodayTasks": return { today: [], overdue: [], upcoming: [] };
       case "meals:getShoppingList": return { items: [], totalEstimatedCost: 0 };
+      case "meals:getActiveShoppingList": return null;
       case "meals:listIngredients": return mocks.ingredients;
       case "hermes:parseQuickTransaction": return args?.input
         ? args.input.toLowerCase().startsWith("monthly ")
@@ -136,7 +137,7 @@ test("category-only quick input cannot charge an arbitrary budget", async () => 
 
 test.each([
   ["ingredients", "Tambah Bahan Baru", "Contoh: Daging Ayam, Ikan Tongkol, Tempe"],
-  ["recipes", "Tambah Resep Baru", "Contoh: Ayam Goreng Lengkuas, Sayur Sop, Nasi Goreng..."],
+  ["recipes", "Tambah resep baru", "Contoh: Sayur sop"],
 ])("menu action opens and focuses the %s form, including after cancellation", async (tab, title, placeholder) => {
   navigate(`/menu?tab=${tab}&action=create`);
   render(<MenuPage />);

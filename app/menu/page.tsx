@@ -8,7 +8,6 @@ import {
   getCurrentWeekRange,
   getWeekDates,
   formatDateKeyLong,
-  WEEKLY_MENU_BUDGET_IDR,
 } from "../lib/utils";
 import { useCallback, useRef, useState } from "react";
 import { ActionIcon } from "../components/ActionIcon";
@@ -16,6 +15,8 @@ import { useQuickCreate, useUrlTab } from "../components/useNavigationActions";
 import type { Id } from "../../convex/_generated/dataModel";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { RecipeIngredientCatalog } from "./RecipeIngredientCatalog";
+import { NewRecipeForm } from "./NewRecipeForm";
+import { ShoppingTab } from "./ShoppingTab";
 
 type ActiveTab = "recipes" | "ingredients" | "shopping" | "mealplan";
 type IngredientKind = "harian" | "mingguan" | "bulanan";
@@ -119,7 +120,7 @@ export default function MenuPage() {
       {activeTab === "recipes" && <RecipesTab openConfirm={openConfirm} />}
       {activeTab === "ingredients" && <IngredientsTab openConfirm={openConfirm} />}
       {activeTab === "shopping" && (
-        <ShoppingTab onGoToMenu={() => setActiveTab("mealplan")} />
+        <ShoppingTab />
       )}
       {activeTab === "mealplan" && <MealPlanTab openConfirm={openConfirm} />}
 
@@ -155,12 +156,6 @@ function RecipesTab({
 }) {
   const [showForm, setShowForm] = useState(false);
   useQuickCreate(useCallback(() => setShowForm(true), []));
-  const [name, setName] = useState("");
-  const [servings, setServings] = useState("2");
-  const [instructions, setInstructions] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
   // Manage ingredients modal
   const [manageRecipe, setManageRecipe] = useState<{
     _id: Id<"recipes">;
@@ -171,35 +166,11 @@ function RecipesTab({
 
   const recipes = useQuery(api.meals.listRecipes, {});
   const allIngredients = useQuery(api.meals.listIngredients);
-  const createRecipe = useMutation(api.meals.createRecipe);
   const removeRecipe = useMutation(api.meals.removeRecipe);
   const removeRecipeIngredient = useMutation(api.meals.removeRecipeIngredient);
 
   const toggleInstructions = (id: string) => {
     setExpandedInstructions((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    if (isSubmitting) return;
-
-    setIsSubmitting(true);
-    try {
-      await createRecipe({
-        name,
-        servings: parseInt(servings, 10),
-        instructions: instructions.trim() || undefined,
-      });
-      setShowForm(false);
-      setName("");
-      setServings("2");
-      setInstructions("");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Terjadi kesalahan");
-    } finally {
-      setIsSubmitting(false);
-    }
   };
 
   const promptDeleteRecipe = (recipe: { _id: Id<"recipes">; name: string }) => {
@@ -235,68 +206,14 @@ function RecipesTab({
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => setShowForm(!showForm)}
+          onClick={() => setShowForm(true)}
+          disabled={showForm}
         >
-          {showForm ? "Batal" : "+ Resep Baru"}
+          + Resep Baru
         </button>
       </div>
 
-      {showForm && (
-        <div className="card" style={{ marginBottom: "var(--space-lg)" }}>
-          <h2 className="card-title" style={{ marginBottom: "var(--space-md)" }}>
-            Tambah Resep Baru
-          </h2>
-          <form onSubmit={handleCreate}>
-            <div className="form-group">
-              <label className="form-label">Nama Resep</label>
-              <input
-                className="form-input"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Contoh: Ayam Goreng Lengkuas, Sayur Sop, Nasi Goreng..."
-                required
-                autoFocus
-              />
-            </div>
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">Porsi</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="1"
-                  value={servings}
-                  onChange={(e) => setServings(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Instruksi / Catatan Memasak (opsional)</label>
-              <textarea
-                className="form-textarea"
-                rows={3}
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                placeholder="Langkah memasak atau catatan bumbu..."
-              />
-            </div>
-            {error && <div className="form-error">{error}</div>}
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setShowForm(false)}
-              >
-                Batal
-              </button>
-              <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
-                {isSubmitting ? "Menyimpan..." : "Simpan Resep"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
+      {showForm && <NewRecipeForm ingredients={allIngredients} onSaved={() => setShowForm(false)} onCancel={() => setShowForm(false)} />}
 
       {/* Recipes Table: DAFTAR BAHAN & ESTIMASI DITAMPILKAN DI TABEL; INSTRUKSI TIDAK LANGSUNG DITAMPILKAN */}
       <div className="card">
@@ -1052,328 +969,6 @@ function IngredientsTab({
 // 3. Daftar Belanja Tab (Fitur Generate Menu 7 Hari <= Rp 120.000 dengan Konfirmasi)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ShoppingTab({ onGoToMenu }: { onGoToMenu: () => void }) {
-  const weekRange = getCurrentWeekRange();
-  const todayKey = todayKeyLocal();
-
-  // Generate Menu Modal state
-  const [showGenerateModal, setShowGenerateModal] = useState(false);
-  const [proposalSeed, setProposalSeed] = useState(1);
-  const [previousAvoid, setPreviousAvoid] = useState<string | undefined>(undefined);
-  const [isApplying, setIsApplying] = useState(false);
-  const [generateError, setGenerateError] = useState<string | null>(null);
-
-  // Active shopping list
-  const shoppingList = useQuery(api.meals.getShoppingList, { weekKey: weekRange.weekKey });
-  const checkItem = useMutation(api.meals.checkShoppingItem);
-
-  // Proposal query (evaluated when modal is open)
-  const proposal = useQuery(
-    api.meals.proposeWeeklyMenu,
-    showGenerateModal
-      ? {
-          startDate: todayKey,
-          budgetIdr: WEEKLY_MENU_BUDGET_IDR, // 120.000
-          seed: proposalSeed,
-          avoid: previousAvoid,
-        }
-      : "skip"
-  );
-
-  const applyWeeklyMenu = useMutation(api.meals.applyWeeklyMenu);
-
-  const handleOpenGenerate = () => {
-    setProposalSeed(Date.now());
-    setPreviousAvoid(undefined);
-    setGenerateError(null);
-    setShowGenerateModal(true);
-  };
-
-  const handleRerollMenu = () => {
-    if (proposal && proposal.status === "ok") {
-      setPreviousAvoid(proposal.signature);
-    }
-    setProposalSeed(Date.now() + Math.floor(Math.random() * 10000));
-    setGenerateError(null);
-  };
-
-  const handleApproveMenu = async () => {
-    if (!proposal || proposal.status !== "ok") return;
-
-    setIsApplying(true);
-    setGenerateError(null);
-    try {
-      await applyWeeklyMenu({
-        startDate: todayKey,
-        budgetIdr: WEEKLY_MENU_BUDGET_IDR,
-        entries: proposal.days.map((d) => ({
-          dateKeyLocal: d.dateKeyLocal,
-          recipeId: d.recipeId,
-        })),
-      });
-
-      setShowGenerateModal(false);
-      // Pindah langsung ke tab Menu seperti yang diminta user!
-      onGoToMenu();
-    } catch (err: unknown) {
-      setGenerateError(err instanceof Error ? err.message : "Gagal menyetujui menu");
-    } finally {
-      setIsApplying(false);
-    }
-  };
-
-  return (
-    <div>
-      <div className="card">
-        <div className="card-header" style={{ marginBottom: 0 }}>
-          <div>
-            <h2 className="card-title">Daftar Belanja — {weekRange.weekKey}</h2>
-            <p className="card-subtitle">
-              Kebutuhan bahan belanja otomatis dari menu masakan minggu ini
-            </p>
-          </div>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={handleOpenGenerate}
-          >
-            Generate Menu
-          </button>
-        </div>
-
-        {/* Active Shopping List Table */}
-        {shoppingList === undefined ? (
-          <div style={{ padding: "16px 0", display: "flex", flexDirection: "column", gap: 10 }}>
-            <div className="skeleton skeleton-row" />
-            <div className="skeleton skeleton-row" />
-            <div className="skeleton skeleton-row" />
-          </div>
-        ) : shoppingList.items.length > 0 ? (
-          <div className="table-container" style={{ marginTop: "var(--space-md)" }}>
-            <table className="editorial-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 48, textAlign: "center" }}>Beli</th>
-                  <th>Nama Bahan</th>
-                  <th>Jumlah Dibutuhkan</th>
-                  <th style={{ textAlign: "right" }}>Estimasi Biaya</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shoppingList.items.map((item) => (
-                  <tr
-                    key={item._id}
-                    className={item.checkedAt ? "voided" : ""}
-                    onClick={() => checkItem({ id: item._id })}
-                    style={{ cursor: "pointer" }}
-                  >
-                    <td style={{ textAlign: "center" }}>
-                      <button
-                        type="button"
-                        className={`checkbox ${item.checkedAt ? "checked" : ""}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          checkItem({ id: item._id });
-                        }}
-                        style={{ display: "inline-block", verticalAlign: "middle" }}
-                      >
-                        {item.checkedAt && "✓"}
-                      </button>
-                    </td>
-                    <td>
-                      <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
-                        {item.ingredient?.name ?? "?"}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="badge badge-accent">
-                        {item.quantity} {item.unit}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: "right", fontWeight: 600, color: "var(--accent-600)" }}>
-                      {formatIdr(item.estimatedCostIdr)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan={3} style={{ textAlign: "right", fontWeight: 700 }}>
-                    Total Estimasi Belanja:
-                  </td>
-                  <td
-                    style={{
-                      textAlign: "right",
-                      fontWeight: 800,
-                      fontSize: "var(--font-size-md)",
-                      color: "var(--accent-600)",
-                    }}
-                  >
-                    {formatIdr(shoppingList.totalEstimatedCost)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        ) : (
-          <div className="empty-state">
-            <div className="empty-state-title">Daftar belanja masih kosong</div>
-            <div className="empty-state-description">
-              Klik tombol &quot;Generate Menu 7 Hari&quot; di atas untuk memilihkan menu seminggu dengan budget maksimal Rp 120.000.
-            </div>
-            <button
-              type="button"
-              className="btn btn-primary"
-              style={{ marginTop: "var(--space-md)" }}
-              onClick={handleOpenGenerate}
-            >
-              Buat Rencana Menu Sekarang
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* MODAL GENERATE MENU: KONFIRMASI MENU 7 HARI & TOTAL BELANJA */}
-      {showGenerateModal && (
-        <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal-content" style={{ maxWidth: 640 }}>
-            <div className="card-header" style={{ marginBottom: "var(--space-sm)" }}>
-              <div>
-                <h3 className="card-title">Rencana Menu 7 Hari</h3>
-                <p className="card-subtitle">
-                  Menu otomatis 1 hari 1 resep dengan batas maksimal belanja Rp 120.000 / minggu
-                </p>
-              </div>
-              <span className="badge badge-accent">Maks. Rp 120.000</span>
-            </div>
-
-            {proposal === undefined ? (
-              <div style={{ padding: "24px 0", textAlign: "center" }}>
-                <div className="skeleton skeleton-row" style={{ height: 40, marginBottom: 12 }} />
-                <div className="skeleton skeleton-row" style={{ height: 40, marginBottom: 12 }} />
-                <div className="skeleton skeleton-row" style={{ height: 40 }} />
-                <p style={{ marginTop: 12, color: "var(--text-tertiary)", fontSize: "var(--font-size-xs)" }}>
-                  Mengalkulasi kombinasi resep terbaik di bawah budget...
-                </p>
-              </div>
-            ) : proposal.status === "no_recipes" ? (
-              <div className="empty-state" style={{ padding: "var(--space-md)" }}>
-                <div className="empty-state-title">Belum ada resep dengan bahan</div>
-                <div className="empty-state-description">
-                  Silakan buat beberapa resep dan hubungkan bahannya terlebih dahulu di tab &quot;Resep&quot;.
-                </div>
-              </div>
-            ) : proposal.status === "over_budget" ? (
-              <div className="form-error" style={{ margin: "var(--space-md) 0" }}>
-                Biaya resep termurah yang tersedia ({formatIdr(proposal.minimumTotalIdr)}) melebihi batas budget mingguan Rp 120.000. Tambahkan resep yang lebih hemat atau sesuaikan takaran bahan.
-              </div>
-            ) : (
-              <div>
-                {/* 7 Days Menu Table */}
-                <div className="table-container" style={{ margin: "var(--space-md) 0", maxHeight: 340, overflowY: "auto" }}>
-                  <table className="editorial-table">
-                    <thead>
-                      <tr>
-                        <th>Hari & Tanggal</th>
-                        <th>Menu Resep</th>
-                        <th>Porsi</th>
-                        <th style={{ textAlign: "right" }}>Harga Masakan</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {proposal.days.map((day) => (
-                        <tr key={day.dateKeyLocal}>
-                          <td style={{ whiteSpace: "nowrap", fontWeight: 600, fontSize: "var(--font-size-xs)" }}>
-                            {formatDateKeyLong(day.dateKeyLocal)}
-                          </td>
-                          <td style={{ color: "var(--text-primary)", fontWeight: 500 }}>
-                            {day.recipeName}
-                          </td>
-                          <td>
-                            <span className="badge badge-neutral" style={{ fontSize: "11px" }}>
-                              {day.servings} porsi
-                            </span>
-                          </td>
-                          <td style={{ textAlign: "right", fontWeight: 700, color: "var(--accent-600)" }}>
-                            {formatIdr(day.costIdr)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Total Belanja Seminggu (DITAMPILKAN DI BAWAH) */}
-                <div
-                  style={{
-                    padding: "12px 16px",
-                    background: "var(--accent-50)",
-                    border: "1px solid var(--accent-100)",
-                    borderRadius: "var(--radius-md)",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: "var(--space-md)",
-                  }}
-                >
-                  <div>
-                    <span style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)", display: "block" }}>
-                      TOTAL SEMUA BELANJA PER MINGGU:
-                    </span>
-                    <strong style={{ fontSize: "18px", color: "var(--accent-600)" }}>
-                      {formatIdr(proposal.totalIdr)}
-                    </strong>
-                    <span style={{ fontSize: "var(--font-size-xs)", color: "var(--text-tertiary)", marginLeft: 8 }}>
-                      (Sisa budget: {formatIdr(proposal.remainingIdr)})
-                    </span>
-                  </div>
-                  <span className="badge badge-accent">
-                    ✓ Di bawah Rp 120.000
-                  </span>
-                </div>
-
-                {generateError && <div className="form-error" style={{ marginBottom: "var(--space-md)" }}>{generateError}</div>}
-
-                {/* ACTION BUTTONS: SETUJU ATAU GANTI MENU */}
-                <div className="modal-actions" style={{ justifyContent: "space-between", gap: 10 }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    onClick={() => setShowGenerateModal(false)}
-                    disabled={isApplying}
-                  >
-                    Batal
-                  </button>
-
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button
-                      type="button"
-                      className="btn btn-secondary"
-                      onClick={handleRerollMenu}
-                      disabled={isApplying}
-                    >
-                      🔄 Ganti Menu
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      onClick={handleApproveMenu}
-                      disabled={isApplying}
-                    >
-                      {isApplying ? "Menyetujui..." : "✓ Setuju & Masuk ke Menu"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // 4. Menu Tab (Final menu selama seminggu, posisi paling kanan, tanpa tombol tambah menu)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1389,10 +984,12 @@ function MealPlanTab({
   }) => void;
 }) {
   const weekRange = getCurrentWeekRange();
-  const weekDates = getWeekDates(weekRange.start);
+  const activeShopping = useQuery(api.meals.getActiveShoppingList, {});
+  const weekDates = getWeekDates(activeShopping?.startDate ? new Date(`${activeShopping.startDate}T00:00:00+07:00`).getTime() : weekRange.start);
   const todayKey = todayKeyLocal();
 
   const [selectedDate, setSelectedDate] = useState(todayKey);
+  const activeDate = weekDates.includes(selectedDate) ? selectedDate : weekDates[0];
 
   const mealPlans = useQuery(api.meals.getMealPlanRange, {
     startDate: weekDates[0],
@@ -1400,7 +997,6 @@ function MealPlanTab({
   });
   const removeMealPlan = useMutation(api.meals.removeMealPlan);
 
-  const dayNames = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
 
   const promptRemoveMeal = (mp: { _id: Id<"mealPlans">; recipeName: string }) => {
     openConfirm({
@@ -1414,7 +1010,7 @@ function MealPlanTab({
     });
   };
 
-  const dayPlans = mealPlans?.filter((mp) => mp.dateKeyLocal === selectedDate) ?? [];
+  const dayPlans = mealPlans?.filter((mp) => mp.dateKeyLocal === activeDate) ?? [];
   const totalCost = dayPlans.reduce((sum, mp) => sum + mp.estimatedCostIdr, 0);
   const totalWeekCost = mealPlans?.reduce((sum, mp) => sum + mp.estimatedCostIdr, 0) ?? 0;
 
@@ -1422,9 +1018,9 @@ function MealPlanTab({
     <div>
       {/* Week Calendar */}
       <div className="menu-calendar">
-        {weekDates.map((date, i) => {
+        {weekDates.map((date) => {
           const isToday = date === todayKey;
-          const isSelected = date === selectedDate;
+          const isSelected = date === activeDate;
           const count = mealPlans?.filter((mp) => mp.dateKeyLocal === date).length ?? 0;
 
           return (
@@ -1436,7 +1032,7 @@ function MealPlanTab({
               className={isSelected ? "active-calendar-day" : ""}
             >
               <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-tertiary)", fontWeight: 500 }}>
-                {dayNames[i]} {isToday && "•"}
+                {new Intl.DateTimeFormat("id-ID", { weekday: "short", timeZone: "Asia/Jakarta" }).format(new Date(`${date}T12:00:00+07:00`))} {isToday && "•"}
               </div>
               <div
                 style={{
@@ -1462,10 +1058,10 @@ function MealPlanTab({
         <div className="card-header" style={{ marginBottom: 0 }}>
           <div>
             <h2 className="card-title">
-              Menu {selectedDate === todayKey ? "Hari Ini" : formatDateKeyLong(selectedDate)}
+              Menu {activeDate === todayKey ? "Hari Ini" : formatDateKeyLong(activeDate)}
             </h2>
             <div style={{ fontSize: "var(--font-size-xs)", color: "var(--text-secondary)", marginTop: 2 }}>
-              Menu final seminggu ke depan • Total belanja seminggu: {formatIdr(totalWeekCost)}
+              Menu final seminggu ke depan • Total belanja seminggu: {formatIdr(activeShopping?.totalEstimatedCost ?? totalWeekCost)}
             </div>
           </div>
           <span className="badge badge-accent">
